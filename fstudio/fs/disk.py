@@ -24,7 +24,8 @@ def count_bad(data: bytes) -> int:
 
 
 RAW_EXT = {".img", ".ima", ".st", ".adf", ".d64", ".d71", ".d81", ".fd", ".vfd", ".flp",
-           ".ssd", ".dsd", ".do", ".po", ".mgt", ".sf7", ".2d", ".xfd", ".atr_raw", ".2mg"}
+           ".ssd", ".dsd", ".do", ".po", ".mgt", ".sf7", ".2d", ".xfd", ".atr_raw", ".2mg", ".trd",
+           ".image", ".dc42", ".ads", ".adm", ".adl"}
 
 
 @dataclass
@@ -319,7 +320,23 @@ def _raw_geometry(size: int, ext: str):
                 return cyl, size // side_sz, ns, ss, 1, True
         return None
     if ext == ".adf":
-        return (80, 2, 11, 512, 0, False) if size == 901120 else (80, 2, 22, 512, 0, False)
+        if size in (901120, 1802240):
+            return (80, 2, 11, 512, 0, False) if size == 901120 else (80, 2, 22, 512, 0, False)
+        if size == 819200:              # Acorn ADFS D/E (5 × 1024)
+            return (80, 2, 5, 1024, 0, False)
+        if size == 1638400:             # Acorn ADFS F
+            return (80, 2, 10, 1024, 0, False)
+    if ext in (".ssd", ".dsd"):         # Acorn DFS : 10 × 256 par piste
+        heads = 2 if ext == ".dsd" else 1
+        cyl = max(1, -(-size // (2560 * heads)))
+        return (min(cyl, 80), heads, 10, 256, 0, False)
+    if ext in (".ads", ".adm", ".adl"):  # Acorn ADFS S/M/L : 16 × 256
+        heads = 2 if ext == ".adl" else 1
+        cyl = max(1, -(-size // (4096 * heads)))
+        return (min(cyl, 80), heads, 16, 256, 0, False)
+    if ext == ".trd":                   # Spectrum TR-DOS : 16 × 256, 2 faces entrelacées
+        cyl = max(1, -(-size // 8192))
+        return (min(cyl, 80), 2, 16, 256, 1, False)
     if ext == ".st" and size not in table:
         for ns in (9, 10, 11, 18):
             for hd in (1, 2):
@@ -366,6 +383,132 @@ def _raw_from_diskdef(path: str, data: bytes, fmt: str, ext: str) -> Optional["D
     return d
 
 
+def _pad(data: bytes, size: int) -> bytes:
+    return data[:size] if len(data) >= size else data + bytes(size - len(data))
+
+
+def parse_atr(path: str, data: bytes, ext: str) -> "Disk":
+    """Atari 8 bits : ATR (en-tête 16 octets) ou XFD (brut). Secteurs numérotés à partir de 1."""
+    if ext == ".atr":
+        ssize = data[4] | data[5] << 8
+        body = data[16:]
+    else:
+        ssize = 256 if len(data) in (183936, 184320) else 128
+        body = data
+    secs = []
+    o = 0
+    while o < len(body):
+        n = 128 if (ssize == 256 and len(secs) < 3 and len(body) % 256 != 0) else ssize
+        secs.append(body[o:o + n])
+        o += n
+    nsec = len(secs)
+    spt = 26 if (ssize == 128 and nsec == 1040) else 18
+    d = Disk(path, ext, raw=None)
+    d.atari = {"ssize": ssize, "nsec": nsec}
+    for i, sd in enumerate(secs):
+        c, r = divmod(i, spt)
+        d.tracks.setdefault((c, 0), []).append(Sec(r + 1, 0 if len(sd) == 128 else 1, sd.ljust(len(sd), b"\0")))
+    d.notes.append(f"Atari 8 bits : {nsec} secteurs de {ssize} octets")
+    return d
+
+
+def parse_oric(path: str, data: bytes) -> Optional["Disk"]:
+    """Oric : image ORICDISK (secteurs) ou MFM_DISK (pistes brutes de 6400 octets)."""
+    import struct as _st
+    if data.startswith(b"ORICDISK"):
+        sides, tracks, nsec = _st.unpack_from("<iii", data, 8)
+        d = Disk(path, ".dsk")
+        o = 256
+        for h in range(max(1, sides)):
+            for c in range(tracks):
+                d.tracks[c, h] = []
+                for r in range(1, nsec + 1):
+                    d.tracks[c, h].append(Sec(r, 1, _pad(data[o:o + 256], 256)))
+                    o += 256
+        d.notes.append("Oric (ORICDISK)")
+        return d
+    if data.startswith(b"MFM_DISK"):
+        sides, tracks, _geo = _st.unpack_from("<iii", data, 8)
+        d = Disk(path, ".dsk")
+        tl = 6400
+        for h in range(max(1, sides)):
+            for c in range(tracks):
+                t = data[256 + (h * tracks + c) * tl: 256 + (h * tracks + c + 1) * tl]
+                secs, i = [], 0
+                while True:
+                    i = t.find(b"\xa1\xa1\xa1\xfe", i)
+                    if i < 0 or i + 10 > len(t):
+                        break
+                    r, n = t[i + 6], t[i + 7] & 3
+                    j = t.find(b"\xa1\xa1\xa1\xfb", i + 10, i + 80)
+                    if j >= 0:
+                        size = 128 << n
+                        secs.append(Sec(r, n, _pad(t[j + 4:j + 4 + size], size)))
+                        i = j + 4 + size
+                    else:
+                        i += 10
+                if secs:
+                    d.tracks[c, h] = sorted(secs, key=lambda x: x.r)
+        d.notes.append("Oric (MFM_DISK)")
+        return d
+    return None
+
+
+def mac_disk(path: str, body: bytes, ext: str) -> "Disk":
+    """Image Macintosh 400/800 Ko : 80 pistes par face, 12 à 8 secteurs selon la zone."""
+    heads = 1 if len(body) <= 409600 else 2
+    d = Disk(path, ext, raw=body)
+    o = 0
+    for c in range(80):
+        for h in range(heads):
+            n = 12 - c // 16
+            d.tracks[c, h] = [Sec(r, 2, _pad(body[o + r * 512:o + (r + 1) * 512], 512)) for r in range(n)]
+            o += n * 512
+    return d
+
+
+def _crc16(data: bytes, crc: int = 0xFFFF) -> int:
+    for b in data:
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else crc << 1
+            crc &= 0xFFFF
+    return crc
+
+
+def write_oric_mfm(disk: "Disk", path: str):
+    """Image Oric MFM_DISK (format Oricutron) : pistes de 6400 octets reconstituées."""
+    import struct as _st
+    heads, cyls = disk.heads, disk.cyls
+    out = bytearray(b"MFM_DISK" + _st.pack("<iii", heads, cyls, 1)).ljust(256, b"\0")
+    for h in range(heads):
+        for c in range(cyls):
+            t = bytearray(b"\x4e" * 80 + b"\0" * 12 + b"\xc2\xc2\xc2\xfc" + b"\x4e" * 50)
+            for s in sorted(disk.track(c, h), key=lambda x: x.r):
+                size = 128 << s.n
+                idf = b"\xa1\xa1\xa1\xfe" + bytes([c, h, s.r, s.n])
+                t += b"\0" * 12 + idf + _crc16(idf).to_bytes(2, "big") + b"\x4e" * 22
+                dat = b"\xa1\xa1\xa1\xfb" + _pad(s.data or b"", size)
+                t += b"\0" * 12 + dat + _crc16(dat).to_bytes(2, "big") + b"\x4e" * 30
+            out += bytes(t[:6400]).ljust(6400, b"\x4e")
+    with open(path, "wb") as f:
+        f.write(out)
+
+
+def parse_diskcopy(path: str, data: bytes) -> Optional["Disk"]:
+    """Macintosh DiskCopy 4.2 : en-tête de 84 octets, données puis étiquettes."""
+    import struct as _st
+    if len(data) < 84 or data[82:84] != b"\x01\x00":
+        return None
+    dsize, tsize = _st.unpack_from(">II", data, 64)
+    if dsize == 0 or 84 + dsize > len(data) or dsize % 512:
+        return None
+    body = data[84:84 + dsize]
+    d = mac_disk(path, body, ".image")
+    d.notes.append(f"DiskCopy 4.2 — {data[1:1 + data[0]].decode('mac_roman', 'replace')}")
+    return d
+
+
 def open_disk(path: str, fmt: Optional[str] = None) -> Disk:
     ext = os.path.splitext(path)[1].lower()
     with open(path, "rb") as f:
@@ -373,6 +516,20 @@ def open_disk(path: str, fmt: Optional[str] = None) -> Disk:
     if head.startswith(b"EXTENDED CPC DSK") or head.startswith(b"MV - CPC"):
         with open(path, "rb") as f:
             return parse_cpc_dsk(path, f.read())
+    if head.startswith((b"ORICDISK", b"MFM_DISK")):
+        with open(path, "rb") as f:
+            d = parse_oric(path, f.read())
+        if d is not None:
+            return d
+    if ext in (".atr", ".xfd") or head[:2] == b"\x96\x02":
+        with open(path, "rb") as f:
+            return parse_atr(path, f.read(), ".atr" if head[:2] == b"\x96\x02" else ".xfd")
+    if ext in (".image", ".dc42", ".img", ".dsk") and len(head) >= 64 and 0 < head[0] < 64:
+        with open(path, "rb") as f:
+            data = f.read()
+        d = parse_diskcopy(path, data)
+        if d is not None:
+            return d
     if ext in RAW_EXT or (ext == ".dsk" and not head.startswith(b"MV")):
         with open(path, "rb") as f:
             data = f.read()

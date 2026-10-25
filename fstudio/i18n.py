@@ -832,6 +832,96 @@ Impossible de lancer l'installateur : 	Cannot start the installer:
 Pas de notes de version.	No release notes.
 Version 	Version
 Sommaire	Contents
+Répertoire DFS	DFS directory
+Répertoire	Directory
+BASIC BBC	BBC BASIC
+Démarrage	Boot
+Face 1 (lecteur 2)	Side 1 (drive 2)
+Chargement &	Load &
+Absolu	Absolute
+Commande	Command
+Utilitaire	Utility
+Police	Font
+Police TrueType	TrueType font
+Créé le	Created
+créé le	created
+Modifié le	Modified
+Fichiers (racine)	Files (root)
+Image PICT	PICT image
+Image MacPaint	MacPaint image
+Texte (lecture seule)	Text (read-only)
+Tableau de bord	Control panel
+Accessoire	Desk accessory
+Ressources	Resources
+Fourche de ressources	Resource fork
+ [ressources]	 [resources]
+créateur	creator
+fourche données	data fork
+fourche ressources	resource fork
+Binaire (exécutable)	Binary (executable)
+secteur de départ	start sector
+n° de fichier	file number
+densité étendue	enhanced density
+Tableau numérique	Numeric array
+Tableau de caractères	Character array
+Fichier +3	+3 file
+en-tête +3DOS	+3DOS header
+type +3	+3 type
+démarrage	autostart
+Fichier séquentiel	Sequential file
+double face	double-sided
+début	start
+fin	end
+Code (exécutable)	Code (executable)
+chargement	load
+adresse	address
+répertoire	directory
+secteur	sector
+Systèmes reconnus : FAT12/16 (PC, Atari ST, MSX, synthés DOS), AmigaDOS OFS/FFS, Commodore 1541/1571/1581, DOS BASIC Thomson, Amstrad CPC (AMSDOS/CP/M), Apple II DOS 3.3/ProDOS, Macintosh MFS/HFS, Acorn DFS/ADFS, Spectrum +3DOS/TR-DOS, Atari 8 bits DOS 2, Oric Sedoric, Akai S900/S1000/S3000 (expérimental).	Supported systems: FAT12/16 (PC, Atari ST, MSX, DOS synths), AmigaDOS OFS/FFS, Commodore 1541/1571/1581, Thomson DOS BASIC, Amstrad CPC (AMSDOS/CP/M), Apple II DOS 3.3/ProDOS, Macintosh MFS/HFS, Acorn DFS/ADFS, Spectrum +3DOS/TR-DOS, Atari 8-bit DOS 2, Oric Sedoric, Akai S900/S1000/S3000 (experimental).
+📁  Créer depuis un dossier…	📁  Create from a folder…
+Construit une disquette au format choisi avec le contenu d'un dossier Windows,\npuis l'écrit sur la disquette ou l'enregistre en image.	Builds a disk in the chosen format with the content of a Windows folder,\nthen writes it to the disk or saves it as an image.
+Choisissez un système de fichiers (pas « Bas niveau »).	Choose a file system (not "Low level").
+Dossier à copier sur la disquette	Folder to copy to the disk
+Création impossible : 	Cannot create: 
+Disquette depuis « 	Disk from "
+ » : 	": 
+ élément(s) copié(s), 	 item(s) copied, 
+ erreur(s).	 error(s).
+Disquette depuis un dossier	Disk from a folder
+ fichier(s) copié(s) · libre : 	 file(s) copied · free: 
+ élément(s) non copié(s) :	 item(s) not copied:
+📂  Ouvrir dans l'explorateur	📂  Open in the explorer
+💾  Enregistrer l'image…	💾  Save the image…
+Écriture ← dossier 	Write ← folder 
+Système de fichiers vierge non reconnu	Blank file system not recognised
+ : écriture de fichiers non prise en charge	: writing files not supported
+💿  Modifier la disquette en direct	💿  Edit the disk directly
+Lit la disquette avec le format actif et l'ouvre dans l'explorateur ;\nles modifications sont ensuite réécrites piste par piste (seules les pistes modifiées).	Reads the disk with the active format and opens it in the explorer;\nchanges are then rewritten track by track (only the modified tracks).
+Choisissez un format précis dans la barre « Format actif » (pas un flux brut ni un scan automatique).	Choose a specific format in the "Active format" bar (not raw flux or automatic scan).
+Lecture pour modification directe	Reading for direct editing
+Modification directe	Direct editing
+Réécrire sur la disquette les pistes modifiées ?<br>	Rewrite the modified tracks to the disk?<br>
+Les autres pistes ne sont pas touchées.	The other tracks are left untouched.
+Modification directe (	Direct editing (
+ secteur(s) illisible(s) : modification directe déconseillée (les pistes touchées seraient réécrites avec des secteurs vides).	 unreadable sector(s): direct editing not recommended (affected tracks would be rewritten with empty sectors).
+Disquette mise à jour : 	Disk updated: 
+Échec partiel : 	Partial failure: 
+ piste(s) réécrite(s) et vérifiée(s)	 track(s) rewritten and verified
+💿  Écrire les modifications sur la disquette	💿  Write the changes to the disk
+💿 <b>Disquette ouverte en direct</b> — 	💿 <b>Disk opened directly</b> — 
+modifications en attente : seules les pistes modifiées seront réécrites.	pending changes: only the modified tracks will be rewritten.
+ajoutez, supprimez ou modifiez des fichiers puis écrivez les modifications.	add, delete or edit files, then write the changes.
+Aucune piste modifiée.	No modified track.
+Disquette mise à jour (modification directe).	Disk updated (direct editing).
+Sedoric 42 pistes, 1 face (17 × 256)	Sedoric 42 tracks, 1 side (17 × 256)
+Disquette Microdisc 3" simple face ; image MFM_DISK (Oricutron).	Single-sided 3" Microdisc disk; MFM_DISK image (Oricutron).
+Sedoric 42 pistes, 2 faces	Sedoric 42 tracks, 2 sides
+Sedoric 80 pistes, 2 faces	Sedoric 80 tracks, 2 sides
+Image illisible : 	Unreadable image: 
+Atari 8 bits (ATASCII)	Atari 8-bit (ATASCII)
+Atari 8 bits	Atari 8-bit
+ secteurs de 	 sectors of 
+Macintosh DiskCopy	Macintosh DiskCopy
 Pistes système vides (pas de CP/M).	Empty system tracks (no CP/M).
 Format IBM du CPC (compatible PC 160 Ko).	CPC IBM format (PC 160 KB compatible).
 Test de surface : isoler les zones défectueuses	Surface test: isolate bad areas

@@ -280,6 +280,7 @@ class MainWindow(QMainWindow):
         self.explorer = ExplorerView()
         self.explorer.log.connect(self.log)
         self.explorer.write_request.connect(self.write_image_now)
+        self.explorer.live_write.connect(self.live_write_now)
         self.explorer.loaded_path.connect(self._catalog_auto)
         self.explorer.loaded_path.connect(self._ident_loaded)
         QTimer.singleShot(5000, lambda: AR.purge_cache())
@@ -829,6 +830,11 @@ class MainWindow(QMainWindow):
         b.setToolTip("Image vierge pour émulateur, ou à remplir dans l'explorateur puis écrire")
         b.clicked.connect(self.create_blank)
         v.addWidget(b)
+        b = QPushButton("📁  Créer depuis un dossier…")
+        b.setToolTip("Construit une disquette au format choisi avec le contenu d'un dossier Windows,\n"
+                     "puis l'écrit sur la disquette ou l'enregistre en image.")
+        b.clicked.connect(self.create_from_folder)
+        v.addWidget(b)
         v.addStretch()
         self.f_group.currentIndexChanged.connect(self._fmt_group_changed)
         self.f_spec.currentIndexChanged.connect(self._fmt_spec_changed)
@@ -933,6 +939,76 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(self, APP_NAME, "Image créée. L'ouvrir dans l'explorateur pour y "
                                 "ajouter des fichiers ?") == QMessageBox.Yes:
             self.explore(p)
+
+    def create_from_folder(self):
+        sp = self._fmt_spec()
+        if sp is None:
+            QMessageBox.warning(self, APP_NAME, "Choisissez un système de fichiers (pas « Bas niveau »).")
+            return
+        folder = QFileDialog.getExistingDirectory(self, "Dossier à copier sur la disquette", self._last_dir())
+        if not folder:
+            return
+        from .folder import build_from_folder
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            r = build_from_folder(sp, self.f_label.text().strip(), folder, EM.session_dir())
+        except Exception as ex:
+            QMessageBox.warning(self, APP_NAME, f"Création impossible : {ex}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.log(f"Disquette depuis « {folder} » : {len(r['added'])} élément(s) copié(s), "
+                 f"{len(r['errors'])} erreur(s).", "warn" if r["errors"] else "ok")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Disquette depuis un dossier")
+        lay = QVBoxLayout(dlg)
+        txt = (f"<b>{html.escape(sp.group)} — {html.escape(sp.label)}</b><br>"
+               f"{r['files']} fichier(s) copié(s) · libre : {html.escape(str(r['free']))}")
+        if r["errors"]:
+            txt += (f"<br><br><span style='color:{T.STATUS['bad']}'><b>{len(r['errors'])} élément(s) non "
+                    "copié(s) :</b></span><br>" + "<br>".join(html.escape(e) for e in r["errors"][:12]))
+        lb = QLabel(txt)
+        lb.setWordWrap(True)
+        lb.setTextFormat(Qt.RichText)
+        lay.addWidget(lb)
+        lst = QListWidget()
+        lst.addItems(r["added"])
+        lay.addWidget(lst, 1)
+        row = QHBoxLayout()
+        path, fmt = r["path"], r["fmt"]
+
+        def write():
+            dlg.accept()
+            ext = os.path.splitext(path)[1].lower()
+            self._write_file(F.native_image(path, fmt) if ext in F.CONVERT_EXTS else path, fmt,
+                             self.f_verify.isChecked(), self.f_erase.isChecked(),
+                             f"Écriture ← dossier {os.path.basename(folder)}")
+
+        def save():
+            ext = os.path.splitext(path)[1]
+            p, _ = QFileDialog.getSaveFileName(dlg, "Enregistrer l'image",
+                                               os.path.join(self._last_dir(), os.path.basename(path)), f"*{ext}")
+            if p:
+                import shutil
+                shutil.copyfile(path, p)
+                self.log(f"Image enregistrée : {p}", "ok")
+
+        for label, fn, primary in (("📤  Écrire sur la disquette", write, True),
+                                   ("📂  Ouvrir dans l'explorateur", lambda: (dlg.accept(), self.explore(path)), False),
+                                   ("💾  Enregistrer l'image…", save, False)):
+            b = QPushButton(label)
+            if primary:
+                b.setObjectName("primary")
+                b.setEnabled(self.dev.connected)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        row.addStretch()
+        c = QPushButton("Fermer")
+        c.clicked.connect(dlg.reject)
+        row.addWidget(c)
+        lay.addLayout(row)
+        dlg.resize(560, 420)
+        dlg.exec()
 
     def _write_file(self, path, fmt, verify, erase, title, retries=3, tracks=None):
         if not self.dev.connected:
@@ -1468,6 +1544,12 @@ class MainWindow(QMainWindow):
         b.clicked.connect(self._read_and_explore)
         self.x_read = b
         v.addWidget(b)
+        b = QPushButton("💿  Modifier la disquette en direct")
+        b.setToolTip("Lit la disquette avec le format actif et l'ouvre dans l'explorateur ;\n"
+                     "les modifications sont ensuite réécrites piste par piste (seules les pistes modifiées).")
+        b.clicked.connect(self.open_live)
+        self.x_live = b
+        v.addWidget(b)
         b = QPushButton("Explorer la dernière image lue")
         b.clicked.connect(self._explore_last)
         self.x_last = b
@@ -1495,7 +1577,8 @@ class MainWindow(QMainWindow):
         v.addWidget(b)
         v.addWidget(_muted("Systèmes reconnus : FAT12/16 (PC, Atari ST, MSX, synthés DOS), AmigaDOS OFS/FFS, "
                            "Commodore 1541/1571/1581, DOS BASIC Thomson, Amstrad CPC (AMSDOS/CP/M), "
-                           "Apple II DOS 3.3/ProDOS, Akai S900/S1000/S3000 (expérimental)."))
+                           "Apple II DOS 3.3/ProDOS, Macintosh MFS/HFS, Acorn DFS/ADFS, Spectrum +3DOS/TR-DOS, "
+                           "Atari 8 bits DOS 2, Oric Sedoric, Akai S900/S1000/S3000 (expérimental)."))
         v.addStretch()
         return w
 
@@ -1559,9 +1642,10 @@ class MainWindow(QMainWindow):
         if not AR.exists(path):
             QMessageBox.warning(self, APP_NAME, "Fichier introuvable.")
             return
-        r = [path] + [x for x in self._recent_list() if x != path]
-        self.settings.setValue("recent_images", r[:15])
-        self._fill_recent()
+        if os.path.dirname(os.path.abspath(AR.split(path)[0])) != os.path.abspath(EM.session_dir()):
+            r = [path] + [x for x in self._recent_list() if x != path]
+            self.settings.setValue("recent_images", r[:15])
+            self._fill_recent()
         fmt = None
         pr = self.x_pick.preset()
         if not self.x_auto.isChecked():
@@ -1580,6 +1664,37 @@ class MainWindow(QMainWindow):
             self.explore(p)
         else:
             QMessageBox.information(self, APP_NAME, "Aucune image lue récemment.")
+
+    def open_live(self):
+        if not self.dev.connected:
+            QMessageBox.information(self, APP_NAME, "Connectez d'abord le Greaseweazle.")
+            return
+        pr = self.fmt_bar.preset()
+        if pr is None or not pr.fmt or pr.fmt == "ibm.scan":
+            QMessageBox.warning(self, APP_NAME, "Choisissez un format précis dans la barre « Format actif » "
+                                "(pas un flux brut ni un scan automatique).")
+            return
+        path = os.path.join(EM.session_dir(), f"direct_{int(time.time())}{pr.ext}")
+        self._live_open = {"snapshot": path, "fmt": pr.fmt}
+        try:
+            planned, cyls = self._planned(pr.fmt, pr.tracks, "c=0-79:h=0-1")
+        except Exception:
+            planned, cyls = None, 80
+        g = F.geometry(pr.fmt)
+        self._reset_stats(cyls, [0, 1], g.nsec if g else 0, planned)
+        job = E.ReadJob(self.dev, self._drive(), path, pr.fmt, pr.tracks, None, self.r_retries.value(),
+                        self.r_seek.value())
+        self.run_job(job, "Lecture pour modification directe")
+
+    def live_write_now(self, path: str, fmt: str, tracks: str):
+        if QMessageBox.warning(
+                self, "Modification directe",
+                f"Réécrire sur la disquette les pistes modifiées ?<br><code>{html.escape(tracks)}</code><br><br>"
+                "Les autres pistes ne sont pas touchées.", QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+            self.explorer.live_committed(False)
+            return
+        self._live_writing = True
+        self._write_file(path, fmt, True, False, f"Modification directe ({tracks})", tracks=tracks)
 
     def _read_and_explore(self):
         if not self.dev.connected:
@@ -2025,6 +2140,9 @@ class MainWindow(QMainWindow):
                 b.setToolTip(i18n.tr("Une opération est déjà en cours."))
             else:
                 b.setToolTip("")
+        for b in (getattr(self, "x_live", None), getattr(self, "x_read", None)):
+            if b is not None:
+                b.setEnabled(ok)
         self.btn_cancel.setVisible(busy)
 
     # ---------------------------------------------------------------- Journal
@@ -2139,7 +2257,7 @@ class MainWindow(QMainWindow):
             g0 = F.geometry(fmt)
             if g0 and g0.capacity and g0.capacity != size:
                 alt = [x for x in F.guess_by_size(p) if x.split(".")[0] == fmt.split(".")[0]]
-                fmt = alt[0] if alt else fmt
+                fmt = alt[0] if alt else (F.special_format(p) or fmt)
         guesses = [] if fmt else F.guess_by_size(p)
         if fmt:
             self.w_pick.select_format(fmt)
@@ -2172,6 +2290,11 @@ class MainWindow(QMainWindow):
         self.banner.show()
 
     def _on_failed(self, msg: str):
+        if getattr(self, "_live_writing", False) and isinstance(self.job, E.WriteJob):
+            self._live_writing = False
+            self.explorer.live_committed(False)
+        if getattr(self, "_live_open", None) and isinstance(self.job, E.ReadJob):
+            self._live_open = None
         if msg == "Annulé" and getattr(self, "_wbatch_active", False) and isinstance(self.job, E.WriteJob):
             self._wbatch_stop()
             return
@@ -2283,6 +2406,12 @@ class MainWindow(QMainWindow):
         if not flux and fmt is None:
             QMessageBox.warning(self, APP_NAME, "Sélectionnez le format de l'image.")
             return
+        if not flux:
+            try:
+                path = F.native_image(path, fmt)
+            except Exception as ex:
+                QMessageBox.warning(self, APP_NAME, f"Image illisible : {ex}")
+                return
         cont = self.w_batch.isChecked() and getattr(self, "_wbatch_active", False)
         if not self.w_batch.isChecked():
             self._wbatch_active = False
@@ -2530,6 +2659,16 @@ class MainWindow(QMainWindow):
                              + (f" — pistes en échec : {', '.join(d['bad_tracks'])}" if d["bad_tracks"] else ""),
                              "warn" if d["bad"] else "ok")
                 return
+            lv = getattr(self, "_live_open", None)
+            if lv and lv["snapshot"] == d["path"]:
+                self._live_open = None
+                if d["bad"]:
+                    QMessageBox.warning(self, "Modification directe",
+                                        f"{d['bad']} secteur(s) illisible(s) : modification directe déconseillée "
+                                        "(les pistes touchées seraient réécrites avec des secteurs vides).")
+                self.explorer.live_next = lv
+                self.explore(d["path"])
+                return
             self.settings.setValue("last_read", d["path"])
             if d["bad"]:
                 QApplication.beep()
@@ -2557,6 +2696,14 @@ class MainWindow(QMainWindow):
                 acts.append(("📤  Écrire une copie", lambda: (self.w_path.setText(p), self._write_path_changed(),
                                                               self.goto_page(1))))
                 self.show_banner(msg, acts, "warn" if d["bad"] else "ok")
+        elif k == "write" and getattr(self, "_live_writing", False):
+            self._live_writing = False
+            self.explorer.live_committed(not d["failed"])
+            self.goto_page(EXPLORER_ROW)
+            self.show_banner(("Disquette mise à jour : " if not d["failed"] else "Échec partiel : ") +
+                             f"{d['verified']} piste(s) réécrite(s) et vérifiée(s)" +
+                             (f", {d['failed']} en échec" if d["failed"] else ""), [],
+                             "ok" if not d["failed"] else "err")
         elif k == "write" and getattr(self, "_wbatch_active", False) and not getattr(self, "_fmt_surface", None) \
                 and not getattr(self, "_fmt_fix", None):
             self._wbatch_done(not d["failed"], f"({d['failed']} piste(s) non vérifiée(s))")

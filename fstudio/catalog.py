@@ -29,9 +29,10 @@ CREATE INDEX IF NOT EXISTS dat_sha1 ON dat(sha1);
 CREATE INDEX IF NOT EXISTS dat_crc ON dat(crc, size);
 """
 IMAGE_EXT = {".img", ".ima", ".st", ".msa", ".adf", ".d64", ".d71", ".d81", ".fd", ".dsk", ".edsk", ".hfe",
-             ".scp", ".imd", ".td0", ".dmk", ".do", ".po", ".2mg", ".vfd", ".flp", ".raw", ".ipf", ".dim"}
+             ".scp", ".imd", ".td0", ".dmk", ".do", ".po", ".2mg", ".vfd", ".flp", ".raw", ".ipf", ".dim", ".atr", ".xfd", ".trd", ".image", ".dc42", ".ssd", ".dsd", ".ads", ".adm", ".adl"}
 PLATFORM_LABEL = {"pc": "PC", "atarist": "Atari ST", "amiga": "Amiga", "c64": "Commodore", "cpc": "Amstrad CPC",
-                  "thomson": "Thomson", "msx": "MSX", "akai": "Akai", "apple2": "Apple II", "": "?"}
+                  "thomson": "Thomson", "msx": "MSX", "akai": "Akai", "apple2": "Apple II", "mac": "Macintosh",
+                  "acorn": "Acorn", "zx": "ZX Spectrum", "atari8": "Atari 8 bits", "oric": "Oric", "": "?"}
 
 
 def db_path() -> str:

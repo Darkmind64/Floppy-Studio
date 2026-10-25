@@ -99,10 +99,14 @@ _EXT_OVERRIDE = {
     "apple2.prodos.140": ".po", "acorn.dfs.ds": ".dsd", "acorn.dfs.ds80": ".dsd",
     "acorn.adfs.160": ".ads", "acorn.adfs.320": ".adm", "acorn.adfs.640": ".adl",
     "ibm.scan": ".imd", "cpc.data": ".dsk", "cpc.system": ".dsk",
+    "oric.ss42": ".dsk", "oric.ds42": ".dsk", "oric.ds80": ".dsk",
+    "atari.90": ".atr", "atari.130": ".atr", "zx.trdos.ds80": ".trd", "mac.800": ".dsk", "mac.400": ".dsk",
 }
 
 # Descriptions des types d'image (extension -> libellé).
 IMAGE_DESC = {
+    ".atr": "Atari 8 bits (ATR)", ".xfd": "Atari 8 bits (XFD)", ".trd": "ZX Spectrum TR-DOS",
+    ".image": "Macintosh DiskCopy", ".dc42": "Macintosh DiskCopy 4.2",
     ".zip": "Archive ZIP (images disquette)",
     ".img": "Image secteurs brute (IMG/IMA)", ".ima": "Image secteurs brute",
     ".st": "Atari ST", ".msa": "Atari ST compressée (MSA)",
@@ -171,6 +175,13 @@ def platforms() -> List[Platform]:
         Preset("Auto (scan) – 40 pistes, 2 faces", "ibm.scan", ".edsk", "c=0-39:h=0-1"),
     ]))
 
+    plats.append(Platform("Oric", [
+        Preset("Sedoric 42 pistes, 1 face (17 × 256)", "oric.ss42", ".dsk", None,
+               "Disquette Microdisc 3\" simple face ; image MFM_DISK (Oricutron)."),
+        Preset("Sedoric 42 pistes, 2 faces", "oric.ds42", ".dsk"),
+        Preset("Sedoric 80 pistes, 2 faces", "oric.ds80", ".dsk"),
+    ]))
+
     plats.append(Platform("Sampleurs & synthés",
         [p for p in presets("akai") + presets("ensoniq")] + [
         Preset("Format PC 720 Ko (Yamaha, Korg… compatibles DOS)", "ibm.720", ".img"),
@@ -221,6 +232,39 @@ disk cpc.system
         rate = 250
     end
 end
+disk oric.ss42
+    cyls = 42
+    heads = 1
+    tracks * ibm.mfm
+        secs = 17
+        bps = 256
+        id = 1
+        gap3 = 30
+        rate = 250
+    end
+end
+disk oric.ds42
+    cyls = 42
+    heads = 2
+    tracks * ibm.mfm
+        secs = 17
+        bps = 256
+        id = 1
+        gap3 = 30
+        rate = 250
+    end
+end
+disk oric.ds80
+    cyls = 80
+    heads = 2
+    tracks * ibm.mfm
+        secs = 17
+        bps = 256
+        id = 1
+        gap3 = 30
+        rate = 250
+    end
+end
 """
 
 
@@ -241,7 +285,7 @@ def _custom_cfg() -> str:
 @lru_cache(maxsize=None)
 def get_diskdef(fmt: str):
     try:
-        if fmt.startswith("cpc."):
+        if fmt.startswith(("cpc.", "oric.")):
             return codec.get_diskdef(fmt, _custom_cfg())
         return codec.get_diskdef(fmt)
     except Exception:
@@ -305,7 +349,7 @@ def image_class(path: str, fmt: Optional[str] = None):
 
 
 def image_filter(explore: bool = False) -> str:
-    exts = sorted(set(util.image_types) | ({".2mg", ".ima", ".vfd", ".flp", ".edsk", ".zip"} if explore else set()))
+    exts = sorted(set(util.image_types) | ({".2mg", ".ima", ".vfd", ".flp", ".edsk", ".zip", ".atr", ".xfd", ".trd", ".image", ".dc42"} if explore else set()))
     allf = " ".join("*" + e for e in exts)
     lines = [f"Toutes les images ({allf})"]
     for e in exts:
@@ -313,7 +357,63 @@ def image_filter(explore: bool = False) -> str:
     return ";;".join(lines)
 
 
+CONVERT_EXTS = {".atr", ".xfd", ".trd", ".image", ".dc42"}   # images à convertir en .img pour greaseweazle
+
+
+def special_format(path: str) -> Optional[str]:
+    """Format d'après l'extension et la taille pour les images que greaseweazle ne connaît pas."""
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    if ext == ".adf":
+        return {819200: "acorn.adfs.800", 1638400: "acorn.adfs.1600"}.get(size)
+    if ext in (".atr", ".xfd"):
+        body = size - (16 if ext == ".atr" else 0)
+        return {92160: "atari.90", 133120: "atari.130"}.get(body)
+    if ext == ".trd":
+        return "zx.trdos.ds80"
+    if ext == ".dsk":
+        try:
+            with open(path, "rb") as f:
+                h = f.read(20)
+        except OSError:
+            return None
+        if h[:8] in (b"ORICDISK", b"MFM_DISK"):
+            import struct as _st
+            sides, tracks = _st.unpack_from("<ii", h, 8)
+            return "oric.ds80" if tracks > 42 else ("oric.ds42" if sides > 1 else "oric.ss42")
+    if ext in (".image", ".dc42"):
+        return "mac.800" if size > 500000 else "mac.400"
+    return None
+
+
+def native_image(path: str, fmt: Optional[str]) -> str:
+    """Copie .img (ordre greaseweazle) d'une image ATR / XFD / TRD / DiskCopy, sinon le chemin inchangé."""
+    if os.path.splitext(path)[1].lower() not in CONVERT_EXTS and not (fmt or "").startswith("oric."):
+        return path
+    import tempfile
+    from .fs.disk import open_disk
+    d = open_disk(path)
+    data = d.linear()
+    g = geometry(fmt) if fmt else None
+    if g and g.capacity:
+        data = data[:g.capacity].ljust(g.capacity, b"\0")
+    out = os.path.join(tempfile.gettempdir(), "FloppyStudio",
+                       os.path.splitext(os.path.basename(path))[0] + "_gw.img")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "wb") as f:
+        f.write(data)
+    return out
+
+
 def default_format_for(path: str) -> Optional[str]:
+    sp = special_format(path)
+    if sp:
+        return sp
+    if os.path.splitext(path)[1].lower() in CONVERT_EXTS:
+        return None
     try:
         return util.get_image_class(path).default_format
     except Exception:
@@ -335,6 +435,8 @@ ANALYSE_CANDIDATES = [
     "akai.800", "akai.1600", "ensoniq.800", "ensoniq.1600", "ensoniq.mirage",
     "acorn.adfs.640", "acorn.adfs.800", "acorn.adfs.1600",
     "msx.2dd", "pc98.2hd", "mac.800", "mac.400", "cpc.data", "cpc.system",
+    "acorn.dfs.ss80", "acorn.dfs.ds80", "zx.3dos.ss40", "zx.trdos.ds80", "atari.90", "atari.130",
+    "oric.ds80", "oric.ss42",
 ]
 
 

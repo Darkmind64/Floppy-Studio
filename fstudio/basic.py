@@ -1,4 +1,4 @@
-"""Détokeniseurs BASIC : Locomotive (CPC), Thomson 1.0/512, MSX, GW-BASIC."""
+"""Détokeniseurs BASIC : Locomotive (CPC), Thomson, MSX, GW-BASIC, BBC, Sinclair, Atari, Oric."""
 from __future__ import annotations
 
 import struct
@@ -390,6 +390,219 @@ def microsoft(b: bytes, dialect: str) -> Optional[str]:
     return "\n".join(out)
 
 
+# --------------------------------------------------------------------------
+# BBC BASIC (Acorn)
+# --------------------------------------------------------------------------
+BBC = dict(zip(range(0x80, 0x100), (
+    "AND DIV EOR MOD OR ERROR LINE OFF STEP SPC TAB( ELSE THEN \x8d OPENIN PTR "
+    "PAGE TIME LOMEM HIMEM ABS ACS ADVAL ASC ASN ATN BGET COS COUNT DEG ERL ERR "
+    "EVAL EXP EXT FALSE FN GET INKEY INSTR( INT LEN LN LOG NOT OPENUP OPENOUT PI "
+    "POINT( POS RAD RND SGN SIN SQR TAN TO TRUE USR VAL VPOS CHR$ GET$ INKEY$ "
+    "LEFT$( MID$( RIGHT$( STR$ STRING$( EOF AUTO DELETE LOAD LIST NEW OLD RENUMBER SAVE EDIT PTR "
+    "PAGE TIME LOMEM HIMEM SOUND BPUT CALL CHAIN CLEAR CLOSE CLG CLS DATA DEF DIM DRAW "
+    "END ENDPROC ENVELOPE FOR GOSUB GOTO GCOL IF INPUT LET LOCAL MODE MOVE NEXT ON VDU "
+    "PLOT PRINT PROC READ REM REPEAT REPORT RESTORE RETURN RUN STOP COLOUR TRACE UNTIL WIDTH OSCLI").split()))
+
+
+def bbc(b: bytes) -> Optional[str]:
+    """Programme BBC BASIC : 0D, n° (2, gros-boutiste), longueur, texte… ; fin 0D FF."""
+    p, out = 0, []
+    while p + 3 < len(b) and b[p] == 0x0D and b[p + 1] != 0xFF:
+        num, ln = b[p + 1] << 8 | b[p + 2], b[p + 3]
+        if ln < 4:
+            return None
+        body, q, txt, quote = b[p + 4:p + ln], 0, [], False
+        while q < len(body):
+            c = body[q]
+            if c == 0x22:
+                quote = not quote
+                txt.append('"')
+            elif quote or c < 0x80:
+                txt.append(chr(c) if 32 <= c < 127 or c == 9 else f"\\x{c:02X}" if c < 32 else chr(c))
+            elif c == 0x8D and q + 3 < len(body):
+                b1, b2, b3 = body[q + 1] ^ 0x54, body[q + 2], body[q + 3]
+                lo = (b2 & 0x3F) | ((b1 << 2) & 0xC0)
+                hi = (b3 & 0x3F) | ((b1 << 4) & 0xC0)
+                txt.append(str(hi << 8 | lo))
+                q += 3
+            elif c == 0xF4:                       # REM : reste de la ligne tel quel
+                txt.append("REM" + body[q + 1:].decode("latin-1"))
+                break
+            else:
+                txt.append(BBC.get(c, f"[{c:02X}]"))
+            q += 1
+        out.append(f"{num} " + "".join(txt))
+        p += ln
+    if not out or p >= len(b) or b[p:p + 2] != b"\x0d\xff":
+        return None
+    return "\n".join(out)
+
+
+# --------------------------------------------------------------------------
+# Sinclair BASIC (ZX Spectrum, +3DOS / TR-DOS)
+# --------------------------------------------------------------------------
+ZX = dict(zip(range(0xA3, 0x100), (
+    "SPECTRUM|PLAY|RND|INKEY$|PI|FN|POINT|SCREEN$|ATTR|AT|TAB|VAL$|CODE|VAL|LEN|SIN|COS|TAN|ASN|ACS|ATN|"
+    "LN|EXP|INT|SQR|SGN|ABS|PEEK|IN|USR|STR$|CHR$|NOT|BIN|OR|AND|<=|>=|<>|LINE|THEN|TO|STEP|DEF FN|CAT|"
+    "FORMAT|MOVE|ERASE|OPEN #|CLOSE #|MERGE|VERIFY|BEEP|CIRCLE|INK|PAPER|FLASH|BRIGHT|INVERSE|OVER|OUT|"
+    "LPRINT|LLIST|STOP|READ|DATA|RESTORE|NEW|BORDER|CONTINUE|DIM|REM|FOR|GO TO|GO SUB|INPUT|LOAD|LIST|"
+    "LET|PAUSE|NEXT|POKE|PRINT|PLOT|RUN|SAVE|RANDOMIZE|IF|CLS|DRAW|CLEAR|RETURN|COPY").split("|")))
+
+
+def spectrum(b: bytes) -> Optional[str]:
+    """Programme Sinclair BASIC : n° (2, gros-boutiste), longueur (2), corps terminé par 0D."""
+    p, out = 0, []
+    while p + 4 <= len(b):
+        num, ln = b[p] << 8 | b[p + 1], b[p + 2] | b[p + 3] << 8
+        if num > 9999 or ln == 0 or p + 4 + ln > len(b) or b[p + 4 + ln - 1] != 0x0D:
+            break
+        body, q, txt, quote = b[p + 4:p + 4 + ln - 1], 0, [], False
+        while q < len(body):
+            c = body[q]
+            if c == 0x0E and not quote:           # nombre binaire caché (5 octets)
+                q += 6
+                continue
+            if c == 0x22:
+                quote = not quote
+            if 0x10 <= c <= 0x15:
+                q += 2
+                continue
+            if c in (0x16, 0x17):
+                q += 3
+                continue
+            if c >= 0xA3 and not quote:
+                w = ZX.get(c, "?")
+                if txt and txt[-1][-1:] not in (" ", ""):
+                    txt.append(" ")
+                txt.append(w + " ")
+            elif c >= 0x90:
+                txt.append(f"[UDG {chr(c - 0x90 + 65)}]" if c <= 0xA2 else "?")
+            elif c == 0x60:
+                txt.append("£")
+            elif c == 0x7F:
+                txt.append("©")
+            elif 32 <= c < 127:
+                txt.append(chr(c))
+            q += 1
+        out.append(f"{num} " + "".join(txt).rstrip())
+        p += 4 + ln
+    return "\n".join(out) if out else None
+
+
+# --------------------------------------------------------------------------
+# Atari BASIC
+# --------------------------------------------------------------------------
+ATARI_CMD = ("REM DATA INPUT COLOR LIST ENTER LET IF FOR NEXT GOTO GO TO GOSUB TRAP BYE CONT COM CLOSE CLR "
+             "DEG DIM END NEW OPEN LOAD SAVE STATUS NOTE POINT XIO ON POKE PRINT RAD READ RESTORE RETURN "
+             "RUN STOP POP ? GET PUT GRAPHICS PLOT POSITION DOS DRAWTO SETCOLOR LOCATE SOUND LPRINT CSAVE "
+             "CLOAD _ ERROR").split()
+ATARI_OP = dict(zip(range(0x12, 0x55), (
+    ",|$|:|;|\n| GOTO | GOSUB | TO | STEP | THEN |#|<=|<>|>=|<|>|=|^|*|+|-|/| NOT | OR | AND |(|)|=|=|"
+    "<=|<>|>=|<|>|=|+|-|(|(|(|(|(|,|STR$|CHR$|USR|ASC|VAL|LEN|ADR|ATN|COS|PEEK|SIN|RND|FRE|EXP|LOG|"
+    "CLOG|SQR|SGN|ABS|INT|PADDLE|STICK|PTRIG|STRIG").split("|")))
+
+
+def _atari_num(m: bytes) -> str:
+    exp = m[0]
+    if exp == 0:
+        return "0"
+    neg, exp = bool(exp & 0x80), (exp & 0x7F) - 64
+    digits = "".join(f"{x >> 4}{x & 15}" for x in m[1:6])
+    v = Decimal(int(digits)) * (Decimal(100) ** (exp - 4))
+    s = format(v.normalize(), "f")
+    s = s.rstrip("0").rstrip(".") if "." in s else s
+    return ("-" if neg else "") + (s or "0")
+
+
+def atari(b: bytes) -> Optional[str]:
+    if len(b) < 20:
+        return None
+    lomem, vntp, vntd, vvtp, stmtab, stmcur, starp = struct.unpack_from("<7H", b, 0)
+    if lomem != 0 or not (vntp <= vntd <= vvtp <= stmtab <= stmcur <= starp):
+        return None
+    base = 14 - lomem
+    names, p = [], vntp + base
+    while p < vntd + base and p < len(b):
+        n = ""
+        while p < len(b):
+            c = b[p]
+            p += 1
+            n += chr(c & 0x7F)
+            if c & 0x80:
+                break
+        names.append(n)
+    out, p, end = [], stmtab + base, stmcur + base
+    while p + 3 <= end and p + 3 <= len(b):
+        num, llen = b[p] | b[p + 1] << 8, b[p + 2]
+        if num >= 32768 or llen < 4:
+            break
+        line_end, q, txt = p + llen, p + 3, []
+        while q < line_end:
+            soff, cmd = b[q], b[q + 1]
+            s_end, r = p + soff, q + 2
+            if cmd != 54:
+                txt.append(ATARI_CMD[cmd].replace(" ", " ") + " " if cmd < len(ATARI_CMD) else "?")
+            if cmd in (0, 1, 55):               # REM, DATA, ERROR : texte brut
+                txt.append(b[r:s_end].decode("latin-1").rstrip("\x9b"))
+                r = s_end
+            while r < s_end:
+                t = b[r]
+                if t >= 0x80:
+                    txt.append(names[t - 0x80] if t - 0x80 < len(names) else "?")
+                    r += 1
+                elif t == 0x0E:
+                    txt.append(_atari_num(b[r + 1:r + 7]))
+                    r += 7
+                elif t == 0x0F:
+                    n = b[r + 1]
+                    txt.append('"' + b[r + 2:r + 2 + n].decode("latin-1") + '"')
+                    r += 2 + n
+                elif t == 0x16:
+                    r += 1
+                else:
+                    txt.append(ATARI_OP.get(t, "?"))
+                    r += 1
+            q = s_end
+            if q < line_end:
+                txt.append(":")
+        out.append(f"{num} " + "".join(txt).strip())
+        p = line_end
+    return "\n".join(out) if out else None
+
+
+# --------------------------------------------------------------------------
+# Oric BASIC (Oric-1 / Atmos)
+# --------------------------------------------------------------------------
+ORIC = dict(zip(range(0x80, 0xF7), (
+    "END EDIT STORE RECALL TRON TROFF POP PLOT PULL LORES DOKE REPEAT UNTIL FOR LLIST LPRINT NEXT DATA "
+    "INPUT DIM CLS READ LET GOTO RUN IF RESTORE GOSUB RETURN REM HIMEM GRAB RELEASE TEXT HIRES SHOOT "
+    "EXPLODE ZAP PING SOUND MUSIC PLAY CURSET CURMOV DRAW CIRCLE PATTERN FILL CHAR PAPER INK STOP ON WAIT "
+    "CLOAD CSAVE DEF POKE PRINT CONT LIST CLEAR GET CALL ! NEW TAB( TO FN SPC( @ AUTO ELSE THEN NOT STEP "
+    "+ - * / ^ AND OR > = < SGN INT ABS USR FRE POS HEX$ & SQR RND LN EXP COS SIN TAN ATN PEEK DEEK LOG "
+    "LEN STR$ VAL ASC CHR$ PI TRUE FALSE KEY$ SCRN POINT LEFT$ RIGHT$ MID$").split()))
+
+
+def oric(b: bytes) -> Optional[str]:
+    lines = _ms_lines(b, 0, False)
+    if not lines:
+        return None
+    out = []
+    for num, body in lines:
+        txt, quote = [], False
+        for i, c in enumerate(body):
+            if c == 0x22:
+                quote = not quote
+            if c >= 0x80 and not quote:
+                txt.append(ORIC.get(c, "?"))
+                if c == 0x9D:                     # REM
+                    txt.append(body[i + 1:].decode("latin-1"))
+                    break
+            else:
+                txt.append(chr(c) if 32 <= c < 127 else "?")
+        out.append(f"{num} " + "".join(txt))
+    return "\n".join(out)
+
+
 def detokenize(platform: str, data: bytes, meta: dict, ext: str) -> Optional[tuple]:
     """Retourne (dialecte, listing) ou None."""
     if len(data) < 5:
@@ -402,6 +615,14 @@ def detokenize(platform: str, data: bytes, meta: dict, ext: str) -> Optional[tup
             tries.append(("BASIC Thomson", thomson))
     elif platform == "msx":
         tries.append(("MSX-BASIC", lambda d: microsoft(d, "msx")))
+    elif platform == "acorn":
+        tries.append(("BBC BASIC", bbc))
+    elif platform == "zx":
+        tries.append(("Sinclair BASIC", spectrum))
+    elif platform == "atari8":
+        tries.append(("Atari BASIC", atari))
+    elif platform == "oric":
+        tries.append(("Oric BASIC", oric))
     elif platform == "apple2":
         if meta.get("type") == "A" or str(meta.get("type", "")).startswith("BAS"):
             from .fs.apple import applesoft

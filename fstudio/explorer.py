@@ -25,7 +25,7 @@ from . import formats as F
 from . import theme as T
 from . import viewers as V
 from .fs import Disk, Entry, FileSystem, human, open_image, write_edsk
-from .fs.disk import Sec, count_bad
+from .fs.disk import Sec, count_bad, open_disk
 from .fs import detect
 
 INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -834,6 +834,7 @@ class EmulatorDialog(QDialog):
 class ExplorerView(QWidget):
     log = Signal(str, str)
     write_request = Signal(str, str, str)     # chemin image, format greaseweazle, pistes
+    live_write = Signal(str, str, str)        # modification directe : image, format, pistes modifiées
     loaded_path = Signal(str)                 # image ouverte avec succès (pour le catalogue)
 
     def __init__(self):
@@ -867,6 +868,23 @@ class ExplorerView(QWidget):
         self.vol_cb.currentIndexChanged.connect(self._select_volume)
         hl.addWidget(self.vol_cb)
         v.addWidget(head)
+
+        self.live_bar = QFrame()
+        self.live_bar.setObjectName("banner")
+        lb = QHBoxLayout(self.live_bar)
+        lb.setContentsMargins(12, 6, 8, 6)
+        self.live_lbl = QLabel("")
+        self.live_lbl.setWordWrap(True)
+        self.live_lbl.setTextFormat(Qt.RichText)
+        lb.addWidget(self.live_lbl, 1)
+        self.b_live = QPushButton("💿  Écrire les modifications sur la disquette")
+        self.b_live.setObjectName("primary")
+        self.b_live.clicked.connect(self.write_live)
+        lb.addWidget(self.b_live)
+        self.live_bar.hide()
+        v.addWidget(self.live_bar)
+        self.live = None
+        self.live_next = None
 
         bar = QHBoxLayout()
         bar.setSpacing(6)
@@ -990,6 +1008,7 @@ class ExplorerView(QWidget):
             return
         self.modified = False
         self._disk_dirty = False
+        self.live, self.live_next = self.live_next, None
         self.origin = path
         if A.is_virtual(path):
             try:
@@ -1312,6 +1331,15 @@ class ExplorerView(QWidget):
             b.setToolTip(b.toolTip() if w else "Modification possible pour FAT (PC, Atari ST, MSX, synthés), "
                          "Amstrad CPC, Amiga, Thomson et Commodore 1541/1581")
         self.mod_lbl.setText("● modifiée (non enregistrée)" if self.modified else "")
+        if self.live and self.disk is not None:
+            self.live_bar.show()
+            dirty = self.modified or bool(getattr(self, "_disk_dirty", False))
+            self.live_lbl.setText("💿 <b>Disquette ouverte en direct</b> — " + (
+                "modifications en attente : seules les pistes modifiées seront réécrites."
+                if dirty else "ajoutez, supprimez ou modifiez des fichiers puis écrivez les modifications."))
+            self.b_live.setEnabled(dirty and (w or bool(getattr(self, "_disk_dirty", False))))
+        else:
+            self.live_bar.hide()
 
     # ---------------------------------------------------------------- Actions
     def _drag_paths(self, entries: List[Entry]) -> List[str]:
@@ -1656,6 +1684,63 @@ class ExplorerView(QWidget):
             if g and g.capacity == size:
                 return c
         return None
+
+    def _image_bytes_path(self, prefix: str) -> Optional[str]:
+        """Enregistre l'état courant dans une image temporaire (même format que l'instantané)."""
+        ext = os.path.splitext(self.live["snapshot"])[1].lower()
+        path = os.path.join(EM.session_dir(), f"{prefix}_{int(time.time() * 1000)}{ext}")
+        if self.fs and self.fs.writable and not getattr(self, "_disk_dirty", False) and \
+                type(self.fs).save is not FileSystem.save:
+            self.fs.save(path)
+        elif ext in (".dsk", ".edsk") and self.disk.kind in ("edsk", "dsk", ".edsk", ".dsk") and \
+                self.fs is not None and self.fs.platform in ("cpc", "zx"):
+            write_edsk(self.disk, path)
+        else:
+            data = self.disk.linear(heads=list(range(self.disk.heads)), sequential=True) if ext == ".fd" \
+                else self.disk.linear()
+            with open(path, "wb") as f:
+                f.write(data)
+        return path
+
+    def write_live(self):
+        """Réécrit sur la disquette uniquement les pistes qui diffèrent de la lecture initiale."""
+        if not self.live:
+            return
+        fmt = self.live["fmt"]
+        try:
+            new = self._image_bytes_path("direct")
+            a = open_disk(self.live["snapshot"], fmt)
+            b = open_disk(new, fmt)
+        except Exception as ex:
+            QMessageBox.warning(self, "Modification directe", str(ex))
+            return
+        keys = set(a.tracks) | set(b.tracks)
+        changed = sorted(k for k in keys if [s.data for s in sorted(a.track(*k), key=lambda x: x.r)] !=
+                         [s.data for s in sorted(b.track(*k), key=lambda x: x.r)])
+        if not changed:
+            QMessageBox.information(self, "Modification directe", "Aucune piste modifiée.")
+            return
+        from .fs.disk import _sides_swapped
+        if _sides_swapped(F.get_diskdef(fmt)):
+            changed = [(c, h ^ 1) for c, h in changed]
+        cyls = sorted({c for c, _ in changed})
+        heads = sorted({h for _, h in changed})
+        spec = f"c={','.join(map(str, cyls))}:h={','.join(map(str, heads))}"
+        self.live["pending"] = new
+        self.live_write.emit(new, fmt, spec)
+
+    def live_committed(self, ok: bool):
+        """Appelé après l'écriture : l'image écrite devient la nouvelle référence."""
+        if not self.live or not self.live.get("pending"):
+            return
+        if ok:
+            self.live["snapshot"] = self.live.pop("pending")
+            self.modified = False
+            self._disk_dirty = False
+            self.log.emit("Disquette mise à jour (modification directe).", "ok")
+        else:
+            self.live.pop("pending", None)
+        self._update_buttons()
 
     def write_disk(self):
         fmt = self._write_fmt()

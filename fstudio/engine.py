@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import os
 import io
 import sys
 import threading
@@ -410,6 +411,42 @@ class ReadJob(Job):
         return flux
 
     def work(self, u):
+        self._oric_target = None
+        ext = os.path.splitext(self.path)[1].lower()
+        if self.fmt and ((self.fmt.startswith("oric.") and ext == ".dsk") or
+                         (self.fmt.startswith("atari.") and ext in (".atr", ".xfd")) or ext == ".trd"):
+            self._oric_target, self.path = self.path, os.path.splitext(self.path)[0] + "_secteurs.img"
+        try:
+            self._work(u)
+        finally:
+            if self._oric_target:
+                self._oric_finish()
+
+    def _oric_finish(self):
+        """Image secteurs → format natif demandé : MFM_DISK (Oric), ATR / XFD (Atari), TRD (Spectrum)."""
+        tmp, target, self._oric_target = self.path, self._oric_target, None
+        self.path = target
+        if not os.path.exists(tmp):
+            return
+        from .fs.disk import open_disk, write_oric_mfm
+        ext = os.path.splitext(target)[1].lower()
+        try:
+            if ext == ".dsk":
+                write_oric_mfm(open_disk(tmp, self.fmt), target)
+            else:
+                with open(tmp, "rb") as f:
+                    data = f.read()
+                if ext == ".atr":
+                    ssize = 128
+                    para = len(data) // 16
+                    data = bytes([0x96, 0x02, para & 0xFF, para >> 8 & 0xFF, ssize & 0xFF, ssize >> 8,
+                                  para >> 16 & 0xFF]) + bytes(9) + data
+                with open(target, "wb") as f:
+                    f.write(data)
+        finally:
+            os.remove(tmp)
+
+    def _work(self, u):
         img_cls = F.image_class(self.path, self.fmt)
         raw = F.is_flux_image(self.path) or self.fmt is None
         fmt_cls = F.get_diskdef(self.fmt) if self.fmt else None
@@ -526,6 +563,8 @@ class ReadJob(Job):
         tot = sum(x.nsec for x in r)
         bad = sum(x.nbad for x in r)
         rpms = [x.rpm for x in r if x.rpm]
+        if getattr(self, "_oric_target", None):
+            self._oric_finish()
         d = {"kind": "read", "path": self.path, "tracks": len(r), "sectors": tot,
              "bad": bad, "seconds": dt,
              "rpm": sum(rpms) / len(rpms) if rpms else 0,

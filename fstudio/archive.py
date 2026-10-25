@@ -11,7 +11,7 @@ SEP = "::"
 ARCHIVE_EXT = {".zip"}
 IMAGE_EXT = {".img", ".ima", ".st", ".msa", ".adf", ".d64", ".d71", ".d81", ".fd", ".dsk", ".edsk", ".hfe",
              ".scp", ".imd", ".td0", ".dmk", ".do", ".po", ".2mg", ".vfd", ".flp", ".raw", ".ipf", ".dim",
-             ".sap", ".hdm", ".ssd", ".dsd", ".adm", ".adl", ".ads", ".d88", ".86f", ".img"}
+             ".sap", ".hdm", ".atr", ".xfd", ".trd", ".image", ".dc42", ".ssd", ".dsd", ".adm", ".adl", ".ads", ".d88", ".86f", ".img"}
 
 
 def is_archive(path: str) -> bool:

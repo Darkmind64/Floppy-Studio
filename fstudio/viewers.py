@@ -84,6 +84,8 @@ def decode_text(b: bytes, charset: str) -> str:
     if charset == "apple2":
         from .fs.apple import apple_text
         return apple_text(bytes(c if c != 0 else 0x20 for c in b))
+    if charset == "atascii":
+        return "".join("\n" if c == 0x9B else (chr(c & 0x7F) if 32 <= (c & 0x7F) < 127 else "·") for c in b)
     s = b.decode(charset, "replace")
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     return "".join(ch if ch >= " " or ch in "\n\t" else "·" for ch in s)
@@ -110,8 +112,8 @@ def looks_text(b: bytes, charset: str = "latin-1") -> bool:
     cut = sample.find(b"\x1a")
     if cut > 16:
         sample = sample[:cut]
-    if charset == "apple2":
-        sample = bytes(c & 0x7F for c in sample)
+    if charset in ("apple2", "atascii"):
+        sample = bytes(0x0A if c == 0x9B else c & 0x7F for c in sample)
         charset = "ascii"
     if charset == "petscii":
         good = sum(1 for c in sample if c in (13, 32) or 0x20 <= c <= 0x5D or 0xC1 <= c <= 0xDA)
@@ -123,7 +125,8 @@ def looks_text(b: bytes, charset: str = "latin-1") -> bool:
 
 CHARSETS = [("Latin-1 (ISO 8859-1)", "latin-1"), ("PC CP437", "cp437"), ("PC CP850", "cp850"),
             ("Atari ST / ASCII", "ascii"), ("Amstrad CPC", "latin-1"), ("Thomson", "thomson"),
-            ("Commodore PETSCII", "petscii"), ("Apple II", "apple2"), ("Mac Roman", "mac_roman"), ("UTF-8", "utf-8"),
+            ("Commodore PETSCII", "petscii"), ("Apple II", "apple2"), ("Mac Roman", "mac_roman"),
+            ("Atari 8 bits (ATASCII)", "atascii"), ("UTF-8", "utf-8"),
             ("Windows-1252", "cp1252")]
 
 

@@ -34,15 +34,20 @@ class CPMFS(FileSystem):
     platform = "cpc"
     charset = "latin-1"
 
-    def __init__(self, disk, first_id: int):
+    prefix = "AMSDOS / CP/M"
+    sides = 1
+
+    def __init__(self, disk, first_id: int, layout: Optional[tuple] = None):
         super().__init__()
         self.disk = disk
-        lname, self.off, self.bsize, self.ndir = LAYOUTS[first_id]
-        self.name = f"AMSDOS / CP/M ({lname})"
+        self.layout = layout
+        lname, self.off, self.bsize, self.ndir = layout[:4] if layout else LAYOUTS[first_id]
+        self.sides = layout[4] if layout and len(layout) > 4 else 1
+        self.name = f"{self.prefix} ({lname})"
         self.first = first_id
         self.spt = len(disk.track(0, 0))
         self.ssize = 512
-        self.ntracks = disk.cyls
+        self.ntracks = disk.cyls * self.sides
         total = (self.ntracks - self.off) * self.spt * self.ssize
         self.nblocks = total // self.bsize
         raw = self._blocks(range(0, self.ndir * 32 // self.bsize))
@@ -58,10 +63,18 @@ class CPMFS(FileSystem):
                      ("Fichiers", str(len(self.files)))] + \
                     ([("Secteurs défectueux", str(bad))] if bad else [])
 
+    def _phys(self, tr: int):
+        return (tr // 2, tr % 2) if self.sides == 2 else (tr, 0)
+
+    def _ptrs(self, e: bytes) -> list:
+        if self.nblocks > 255:
+            return [e[16 + i] | e[17 + i] << 8 for i in range(0, 16, 2)]
+        return list(e[16:32])
+
     def _lsector(self, n: int) -> bytes:
         tr, idx = divmod(n, self.spt)
         tr += self.off
-        s = self.disk.sector(tr, 0, self.first + idx)
+        s = self.disk.sector(*self._phys(tr), self.first + idx)
         return (s.data if s and s.data else b"\xE5" * self.ssize)[:self.ssize].ljust(self.ssize, b"\0")
 
     def _blocks(self, blocks) -> bytes:
@@ -80,7 +93,7 @@ class CPMFS(FileSystem):
             if not name or not all(32 <= ord(ch) < 127 for ch in name + ext):
                 continue
             key = (user, name, ext)
-            files.setdefault(key, []).append((e[12] + 32 * e[14], e[15], list(e[16:32]),
+            files.setdefault(key, []).append((e[12] + 32 * e[14], e[15], self._ptrs(e),
                                               e[9] & 0x80, e[10] & 0x80))
         for (user, name, ext), exts in files.items():
             exts.sort()
@@ -120,7 +133,7 @@ class CPMFS(FileSystem):
             k = self.bsize // self.ssize
             for i in range(k):
                 tr, idx = divmod(b * k + i, self.spt)
-                s = self.disk.sector(tr + self.off, 0, self.first + idx)
+                s = self.disk.sector(*self._phys(tr + self.off), self.first + idx)
                 if s is None or not s.ok:
                     bad.add(b)
         for b in bad:
@@ -165,7 +178,7 @@ class CPMFS(FileSystem):
 
     def _wlsector(self, n: int, data: bytes):
         tr, idx = divmod(n, self.spt)
-        s = self.disk.sector(tr + self.off, 0, self.first + idx)
+        s = self.disk.sector(*self._phys(tr + self.off), self.first + idx)
         if s is None:
             raise FSError(f"Secteur absent (piste {tr + self.off}, ID {self.first + idx:02X})")
         s.data, s.ok = bytes(data[:self.ssize].ljust(self.ssize, b"\0")), True
@@ -238,7 +251,7 @@ class CPMFS(FileSystem):
         self.refresh()
 
     def refresh(self):
-        self.__init__(self.disk, self.first)
+        self.__init__(self.disk, self.first, self.layout)
 
     def save(self, path: str):
         from .disk import write_edsk

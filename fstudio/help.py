@@ -89,6 +89,8 @@ ou pour y copier des fichiers dans l'explorateur avant écriture.</li>
 système de fichiers (clusters défectueux FAT, blocs Amiga et Thomson, fichier caché BADSECT.$$$ sur CPC) ;
 la disquette reste utilisable avec une capacité réduite. Si une zone système est touchée, elle est déclarée
 inutilisable.</li>
+<li><b>Créer depuis un dossier</b> (page Formater) : le contenu d'un dossier Windows est copié dans une
+disquette du format choisi (sous-dossiers compris quand le système les gère), puis écrit ou enregistré.</li>
 <li><b>Duplication en série</b> (page Écrire) : la même image est écrite sur plusieurs disquettes ; la
 suivante est détectée à l'insertion, un bilan liste les disquettes en échec.</li>
 <li>Si les 4 premières pistes échouent, l'écriture s'arrête et la cause probable est indiquée (format DD
@@ -105,6 +107,12 @@ images (IFF, PCX, Degas, NEO, écran CPC, Koala), sons, hexadécimal, désassemb
 <li><b>Occupation</b> : carte des blocs ; <b>Secteurs</b> : éditeur hexadécimal ; <b>Rechercher</b> : texte ou
 octets dans toute l'image.</li>
 <li>Les fichiers supprimés encore présents apparaissent dans « Fichiers supprimés ».</li>
+<li>Systèmes lus en plus : <b>Macintosh</b> MFS/HFS (fourches de ressources séparées), <b>Acorn</b> DFS et ADFS
+(S/M/L/D/E/F, E+/F+), <b>ZX Spectrum</b> +3DOS et TR-DOS, <b>Atari 8 bits</b> DOS 2.0/2.5 (ATR, XFD), <b>Oric</b>
+Sedoric ; listings BBC BASIC, Sinclair BASIC, Atari BASIC et Oric BASIC.</li>
+<li><b>Modifier la disquette en direct</b> : la disquette est lue avec le format actif et ouverte dans
+l'explorateur ; après ajout ou suppression de fichiers, <b>Écrire les modifications</b> ne réécrit que les
+pistes qui ont changé.</li>
 <li><b>Exécuter</b> / <b>Lancer l'image</b> utilisent les émulateurs configurés (⚙).</li>
 <li>Glissez des fichiers depuis l'Explorateur Windows sur l'arborescence pour les ajouter, ou depuis
 l'arborescence vers Windows pour les extraire.</li>
@@ -207,6 +215,8 @@ writing.</li>
 <li><b>Surface test</b> (format): tracks failing verification are isolated in the file system (FAT bad
 clusters, Amiga and Thomson blocks, hidden BADSECT.$$$ file on CPC); the disk stays usable with less space. If a
 system area is affected, the disk is reported as unusable.</li>
+<li><b>Create from a folder</b> (Format page): a Windows folder is copied to a disk of the chosen format
+(subfolders included when the file system supports them), then written or saved.</li>
 <li><b>Batch duplication</b> (Write page): the same image is written to several disks; the next one is detected
 on insertion and a summary lists failed disks.</li>
 <li>If the first 4 tracks fail, writing stops and the likely cause is shown (DD format on an HD disk,
@@ -222,6 +232,11 @@ PCX, Degas, NEO, CPC screen, Koala), sounds, hex, disassembler.</li>
 <b>Write to disk</b>.</li>
 <li><b>Usage</b>: block map; <b>Sectors</b>: hex editor; <b>Search</b>: text or bytes in the whole image.</li>
 <li>Deleted files still present are listed under "Deleted files".</li>
+<li>Additional systems read: <b>Macintosh</b> MFS/HFS (resource forks listed separately), <b>Acorn</b> DFS and ADFS
+(S/M/L/D/E/F, E+/F+), <b>ZX Spectrum</b> +3DOS and TR-DOS, <b>Atari 8-bit</b> DOS 2.0/2.5 (ATR, XFD), <b>Oric</b>
+Sedoric; BBC BASIC, Sinclair BASIC, Atari BASIC and Oric BASIC listings.</li>
+<li><b>Edit the disk directly</b>: the disk is read with the active format and opened in the explorer; after adding
+or deleting files, <b>Write the changes</b> rewrites only the tracks that changed.</li>
 <li><b>Run</b> / <b>Boot image</b> use the configured emulators (⚙).</li>
 <li>Drag files from Windows Explorer onto the tree to add them, or from the tree to Windows to extract.</li>
 </ul>""",

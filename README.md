@@ -20,6 +20,10 @@ automatiquement. Les mêmes fonctions d'exploration et de conversion marchent sa
 
 - **Format actif unique** : choisi une seule fois dans la barre du haut (ou détecté automatiquement), il
   s'applique à toutes les pages (lecture, écriture, copie, formatage, explorateur, conversion).
+- **Modification directe** : la disquette s'ouvre dans l'explorateur ; seules les pistes modifiées sont réécrites.
+- **Disquette depuis un dossier** : le contenu d'un dossier Windows copié sur une disquette du format choisi.
+- **Nouveaux systèmes explorés** : Macintosh MFS/HFS, Acorn DFS/ADFS, ZX Spectrum +3DOS/TR-DOS, Atari 8 bits
+  DOS 2 (ATR/XFD), Oric Sedoric (MFM_DISK) ; listings BBC, Sinclair, Atari et Oric BASIC.
 - **Test de surface au formatage** : les pistes défectueuses sont isolées dans le système de fichiers (FAT,
   Amiga, Thomson, CPC) pour réutiliser une disquette abîmée.
 - **Duplication en série** : une image écrite sur plusieurs disquettes à la suite, avec détection d'insertion.
