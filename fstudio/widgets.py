@@ -4,9 +4,9 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolTip,
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLayout, QSizePolicy, QToolTip,
                                QVBoxLayout, QWidget)
 
 from . import theme as T
@@ -55,7 +55,7 @@ class TrackMap(QWidget):
     def __init__(self):
         super().__init__()
         self.setMouseTracking(True)
-        self.setMinimumHeight(240)
+        self.setMinimumHeight(120)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.mode = "grid"
         self.health = False
@@ -323,12 +323,118 @@ class TrackMap(QWidget):
         p.drawArc(rect, int((90 - start_deg) * 16), int(-span_deg * 16))
 
 
+class FlowLayout(QLayout):
+    """Disposition qui passe à la ligne quand la largeur manque (barres de boutons, légendes)."""
+
+    def __init__(self, parent=None, hspacing: int = 8, vspacing: int = 8):
+        super().__init__(parent)
+        self._items = []
+        self._h, self._v = hspacing, vspacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def addStretch(self, *_a):      # compatibilité avec QHBoxLayout
+        pass
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, i):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._do(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do(rect, False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for it in self._items:
+            if it.widget() is not None and not it.widget().isVisible() and it.widget().isHidden():
+                continue
+            size = size.expandedTo(it.minimumSize())
+        m = self.contentsMargins()
+        return size + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    def _do(self, rect, test):
+        m = self.contentsMargins()
+        r = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        x, y, line = r.x(), r.y(), 0
+        for it in self._items:
+            w = it.widget()
+            if w is not None and w.isHidden():
+                continue
+            sh = it.sizeHint()
+            nx = x + sh.width() + self._h
+            if nx - self._h > r.right() + 1 and line > 0:
+                x, y = r.x(), y + line + self._v
+                nx, line = x + sh.width() + self._h, 0
+            if not test:
+                it.setGeometry(QRect(QPoint(x, y), sh))
+            x, line = nx, max(line, sh.height())
+        return y + line - rect.y() + m.bottom()
+
+
+class FlowBar(QWidget):
+    """Barre de widgets qui passe à la ligne (hauteur adaptée à la largeur)."""
+
+    def __init__(self, hspacing: int = 8, vspacing: int = 6):
+        super().__init__()
+        self.flow = FlowLayout(self, hspacing, vspacing)
+        sp = self.sizePolicy()
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+
+    def addWidget(self, w):
+        self.flow.addWidget(w)
+
+    def addStretch(self, *_a):
+        pass
+
+    def resizeEvent(self, e):
+        _fit_flow_height(self)
+        super().resizeEvent(e)
+
+    def event(self, e):
+        r = super().event(e)
+        if e.type() in (e.Type.LayoutRequest, e.Type.Show):
+            _fit_flow_height(self)
+        return r
+
+
+def _fit_flow_height(w: QWidget):
+    """Hauteur minimale = hauteur réelle des lignes pour la largeur courante (évite les chevauchements)."""
+    lay = w.layout()
+    if lay is None or not w.isVisible() or w.width() < 150:
+        return
+    h = lay.heightForWidth(w.width())
+    if h > 0 and w.minimumHeight() != h:
+        w.setMinimumHeight(h)
+
+
 class Legend(QWidget):
     def __init__(self, keys: List[str]):
         super().__init__()
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(14)
+        lay = FlowLayout(self, 14, 4)
+        sp = self.sizePolicy()
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
         self.items = {}
         for k in keys:
             w = QWidget()
@@ -344,7 +450,10 @@ class Legend(QWidget):
             l.addWidget(t)
             lay.addWidget(w)
             self.items[k] = w
-        lay.addStretch()
+
+    def resizeEvent(self, e):
+        _fit_flow_height(self)
+        super().resizeEvent(e)
 
 
 # --------------------------------------------------------------------------
@@ -354,7 +463,7 @@ class FluxHistogram(QWidget):
     def __init__(self):
         super().__init__()
         self.hist: List[int] = []
-        self.setMinimumHeight(130)
+        self.setMinimumHeight(60)
         self.title = ""
 
     def set_hist(self, hist: List[int], title: str = ""):
@@ -375,14 +484,16 @@ class FluxHistogram(QWidget):
                    tr(self.title or "Histogramme des intervalles de flux"))
         # repères µs
         max_us = HIST_BINS * HIST_STEP_US
-        for us in (2, 4, 6, 8, 10, 12, 14):
+        step = 2 if w / (max_us / 2) >= 44 else (4 if w / (max_us / 4) >= 44 else 8)
+        for us in range(step, int(max_us), step):
             x = lm + us / max_us * w
             p.setPen(QPen(QColor(T.BORDER), 1, Qt.DashLine))
             p.drawLine(QPointF(x, tm), QPointF(x, tm + h))
             p.setPen(QColor(T.MUTED))
-            p.drawText(QRectF(x - 20, tm + h + 2, 40, 16), Qt.AlignCenter, f"{us} µs")
+            p.drawText(QRectF(x - 22, tm + h + 2, 44, 16), Qt.AlignCenter, f"{us} µs")
         if not self.hist or max(self.hist) == 0:
-            p.drawText(QRectF(lm, tm, w, h), Qt.AlignCenter, tr("Cliquez une piste lue pour voir son flux"))
+            p.drawText(QRectF(lm, tm, w, h), Qt.AlignCenter | Qt.TextWordWrap,
+                       tr("Cliquez une piste lue pour voir son flux"))
             return
         mx = math.log1p(max(self.hist))
         bw = w / len(self.hist)

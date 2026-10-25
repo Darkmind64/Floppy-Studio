@@ -14,6 +14,7 @@ from . import archive as AR
 from . import theme as T
 from .catalog import PLATFORM_LABEL, Catalog, ScanJob
 from .fs import human
+from .widgets import FlowBar
 
 COLS = ["Titre", "Plateforme", "Système", "Fichiers", "Taille", "Illisibles", "Ajouté", "Notes", "Chemin",
         "Identification (DAT)"]
@@ -51,13 +52,14 @@ class CatalogView(QWidget):
         hl.addWidget(self.prog)
         v.addWidget(head)
 
-        bar = QHBoxLayout()
+        bar = FlowBar(6, 6)
         self.q = QLineEdit()
+        self.q.setMinimumWidth(260)
         self.q.setPlaceholderText("Rechercher un titre, une étiquette, une note ou un nom de fichier…")
         self.q.textChanged.connect(lambda _: self._timer.start(250))
         self.plat = QComboBox()
         self.plat.currentIndexChanged.connect(self.refresh)
-        bar.addWidget(self.q, 1)
+        bar.addWidget(self.q)
         bar.addWidget(self.plat)
         for txt, slot, tip in (("📂  Ouvrir", self.open_selected, "Ouvrir l'image dans l'explorateur"),
                                ("🗂  Doublons", self.show_duplicates, "Images identiques et fichiers en double"),
@@ -69,7 +71,7 @@ class CatalogView(QWidget):
             b.setToolTip(tip)
             b.clicked.connect(slot)
             bar.addWidget(b)
-        v.addLayout(bar)
+        v.addWidget(bar)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.refresh)

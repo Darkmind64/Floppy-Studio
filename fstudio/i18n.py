@@ -544,7 +544,7 @@ Un lecteur 3,5" sain tourne à 300 tr/min ±1,5 %.	A healthy 3.5" drive spins at
 Calibrage / alignement	Calibration / alignment
 Pistes « cylindre.face » lues à tour de rôle	"cylinder.side" tracks read in turn
 ▶  Démarrer	▶  Start
-Qualité > 97 % : excellent · 92–97 % : correct · < 90 % : réglage ou support à vérifier.	Quality > 97 %: excellent · 92–97 %: fair · < 90 %: check alignment or media.
+Qualité &gt; 97 % : excellent · 92–97 % : correct · &lt; 90 % : réglage ou support à vérifier.	Quality &gt; 97 %: excellent · 92–97 %: fair · &lt; 90 %: check alignment or media.
 Déplacer la tête	Move the head
 Aller	Go
 Piste 0	Track 0
@@ -832,6 +832,13 @@ Impossible de lancer l'installateur : 	Cannot start the installer:
 Pas de notes de version.	No release notes.
 Version 	Version
 Sommaire	Contents
+🕹  Lancer l'image	🕹  Run image
+➕  Ajouter…	➕  Add…
+💾  Enregistrer sous…	💾  Save as…
+↗  Ouvrir avec…	↗  Open with…
+Ouvrir le fichier avec l'application Windows associée	Open the file with the associated Windows application
+Lancer l'image dans l'émulateur configuré	Run the image in the configured emulator
+Enregistrer l'image modifiée sous…	Save the modified image as…
 Répertoire DFS	DFS directory
 Répertoire	Directory
 BASIC BBC	BBC BASIC

@@ -24,6 +24,7 @@ from . import emulators as EM
 from . import formats as F
 from . import theme as T
 from . import viewers as V
+from .widgets import FlowBar
 from .fs import Disk, Entry, FileSystem, human, open_image, write_edsk
 from .fs.disk import Sec, count_bad, open_disk
 from .fs import detect
@@ -122,6 +123,13 @@ class FileTree(QTreeWidget):
     """Arborescence avec glisser-déposer vers / depuis l'Explorateur Windows."""
     drag_export = None   # callable(entries) -> list[path]
     drop_import = None   # callable(paths, entry_cible) -> None ; None = import refusé
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        w = self.viewport().width()
+        if self.columnCount() >= 4:
+            self.setColumnHidden(3, w < 430)       # Date
+            self.setColumnHidden(2, w < 300)       # Type
 
     def _ext_drop(self, e) -> bool:
         return bool(self.drop_import and e.mimeData().hasUrls() and e.source() is None)
@@ -871,8 +879,9 @@ class ExplorerView(QWidget):
 
         self.live_bar = QFrame()
         self.live_bar.setObjectName("banner")
-        lb = QHBoxLayout(self.live_bar)
+        lb = QVBoxLayout(self.live_bar)
         lb.setContentsMargins(12, 6, 8, 6)
+        lb.setSpacing(6)
         self.live_lbl = QLabel("")
         self.live_lbl.setWordWrap(True)
         self.live_lbl.setTextFormat(Qt.RichText)
@@ -880,26 +889,27 @@ class ExplorerView(QWidget):
         self.b_live = QPushButton("💿  Écrire les modifications sur la disquette")
         self.b_live.setObjectName("primary")
         self.b_live.clicked.connect(self.write_live)
-        lb.addWidget(self.b_live)
+        lb.addWidget(self.b_live, 0, Qt.AlignLeft)
         self.live_bar.hide()
         v.addWidget(self.live_bar)
         self.live = None
         self.live_next = None
 
-        bar = QHBoxLayout()
-        bar.setSpacing(6)
+        bar = FlowBar(6, 6)
         self.b_export = QPushButton("💾  Exporter…")
         self.b_export.setToolTip("Exporte la sélection (ou tout le disque si rien n'est sélectionné)")
         self.b_export.clicked.connect(self.export_selected)
         self.b_conv = QPushButton("🖼  Exporter converti…")
         self.b_conv.setToolTip("Image → PNG, son → WAV, BASIC/texte → TXT")
         self.b_conv.clicked.connect(self.export_converted)
-        self.b_open = QPushButton("↗  Ouvrir avec Windows")
+        self.b_open = QPushButton("↗  Ouvrir avec…")
+        self.b_open.setToolTip("Ouvrir le fichier avec l'application Windows associée")
         self.b_open.clicked.connect(self.open_external)
         self.b_run = QPushButton("▶  Exécuter")
         self.b_run.setObjectName("primary")
         self.b_run.clicked.connect(self.run_file)
-        self.b_boot = QPushButton("🕹  Lancer l'image dans l'émulateur")
+        self.b_boot = QPushButton("🕹  Lancer l'image")
+        self.b_boot.setToolTip("Lancer l'image dans l'émulateur configuré")
         self.b_boot.clicked.connect(self.run_image)
         self.b_emus = QPushButton("⚙")
         self.b_emus.setToolTip("Configurer les émulateurs")
@@ -914,18 +924,16 @@ class ExplorerView(QWidget):
         self.filter.textChanged.connect(self._apply_filter)
         bar.addWidget(self.filter)
         bar.addWidget(self.b_emus)
-        v.addLayout(bar)
-
-        ebar = QHBoxLayout()
-        ebar.setSpacing(6)
-        self.b_add = QPushButton("➕  Ajouter des fichiers…")
+        ebar = bar
+        self.b_add = QPushButton("➕  Ajouter…")
         self.b_add.setToolTip("Copie des fichiers dans l'image (ou glissez-les sur l'arborescence)")
         self.b_add.clicked.connect(self.add_files)
         self.b_mkdir = QPushButton("📁  Nouveau dossier")
         self.b_mkdir.clicked.connect(self.make_dir)
         self.b_del = QPushButton("🗑  Supprimer")
         self.b_del.clicked.connect(self.delete_selected)
-        self.b_save = QPushButton("💾  Enregistrer l'image sous…")
+        self.b_save = QPushButton("💾  Enregistrer sous…")
+        self.b_save.setToolTip("Enregistrer l'image modifiée sous…")
         self.b_save.clicked.connect(self.save_image)
         self.b_write = QPushButton("📤  Écrire sur la disquette")
         self.b_write.clicked.connect(self.write_disk)
@@ -933,7 +941,6 @@ class ExplorerView(QWidget):
         self.mod_lbl.setStyleSheet(f"color:{T.STATUS['retried']}")
         for b in (self.b_add, self.b_mkdir, self.b_del, self.b_save, self.b_write):
             ebar.addWidget(b)
-        ebar.addSpacing(12)
         self.b_occ = QPushButton("🗺  Occupation")
         self.b_occ.setToolTip("Carte d'occupation du volume (clic : sélectionne le fichier)")
         self.b_occ.clicked.connect(self.show_occupancy)
@@ -946,8 +953,7 @@ class ExplorerView(QWidget):
         for b in (self.b_occ, self.b_search, self.b_sect):
             ebar.addWidget(b)
         ebar.addWidget(self.mod_lbl)
-        ebar.addStretch()
-        v.addLayout(ebar)
+        v.addWidget(bar)
         self.modified = False
         self._disk_dirty = False
         self._alloc = None

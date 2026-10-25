@@ -31,7 +31,7 @@ from .catalog_view import CatalogView
 from .fs import mkfs as MK
 from .fs import open_disk
 from .fs.base import human
-from .widgets import FluxHistogram, Legend, RpmChart, StatTile, TrackMap, card
+from .widgets import FlowBar, FluxHistogram, Legend, RpmChart, StatTile, TrackMap, card
 
 ANALYSE_ROW = 3
 EXPLORER_ROW = 4
@@ -141,10 +141,13 @@ class FormatBar(QFrame):
         t.setObjectName("h2")
         self.plat = QComboBox()
         self.fmt = QComboBox()
-        self.plat.setMinimumWidth(170)
-        self.fmt.setMinimumWidth(260)
+        for cb, n in ((self.plat, 12), (self.fmt, 22)):
+            cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            cb.setMinimumContentsLength(n)
         self.geo = QLabel("")
         self.geo.setObjectName("muted")
+        self.geo.setMinimumWidth(0)
+        self.geo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.geo.setTextFormat(Qt.RichText)
         for p in F.platforms():
             self.plat.addItem(p.name)
@@ -310,18 +313,22 @@ class MainWindow(QMainWindow):
         bar.setObjectName("sidebar")
         bar.setFixedHeight(58)
         l = QHBoxLayout(bar)
-        l.setContentsMargins(16, 8, 16, 8)
-        l.setSpacing(10)
+        l.setContentsMargins(12, 8, 12, 8)
+        l.setSpacing(8)
         logo = QLabel("💾")
         logo.setStyleSheet("font-size:20pt;")
         title = QLabel(APP_NAME)
         title.setObjectName("h1")
+        title.setMinimumWidth(0)
+        title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        title.setMaximumWidth(title.sizeHint().width() + 4)
         l.addWidget(logo)
-        l.addWidget(title)
-        l.addSpacing(24)
+        l.addWidget(title, 1)
+        l.addSpacing(12)
 
         self.port_cb = QComboBox()
-        self.port_cb.setMinimumWidth(260)
+        self.port_cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.port_cb.setMinimumContentsLength(11)
         btn_ref = QPushButton("↻")
         btn_ref.setToolTip("Rafraîchir la liste des ports")
         btn_ref.setFixedWidth(40)
@@ -334,8 +341,11 @@ class MainWindow(QMainWindow):
                      ("3", "Shugart DS3")]:
             self.drive_cb.addItem(v, k)
         self.drive_cb.setToolTip("Sélection du lecteur sur le câble")
+        self.drive_cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.drive_cb.setMinimumContentsLength(10)
         self.chip = QLabel("Déconnecté")
         self.chip.setObjectName("chip")
+        self.chip.setMaximumWidth(260)
         self._chip(False)
 
         l.addWidget(QLabel("Port"))
@@ -367,6 +377,9 @@ class MainWindow(QMainWindow):
         return bar
 
     def _chip(self, on: bool, text: Optional[str] = None):
+        if on and text:
+            self.chip.setToolTip(text)
+            text = self.chip.fontMetrics().elidedText(i18n.tr(text), Qt.ElideRight, 230)
         if on:
             self.chip.setText(text or "Connecté")
             self.chip.setStyleSheet(f"background:{T.CHIP_ON_BG}; color:{T.CHIP_ON};")
@@ -1732,7 +1745,7 @@ class MainWindow(QMainWindow):
         fl.addWidget(_row(QLabel("Pistes"), self.t_cal_tracks, b))
         self.t_cal_chart = RpmChart((80, 95, 100), 120)
         fl.addWidget(self.t_cal_chart)
-        self.t_cal_lbl = _muted("Qualité > 97 % : excellent · 92–97 % : correct · < 90 % : réglage ou support à vérifier.")
+        self.t_cal_lbl = _muted("Qualité &gt; 97 % : excellent · 92–97 % : correct · &lt; 90 % : réglage ou support à vérifier.")
         self.t_cal_lbl.setTextFormat(Qt.RichText)
         fl.addWidget(self.t_cal_lbl)
         v.addWidget(fr)
@@ -1954,23 +1967,30 @@ class MainWindow(QMainWindow):
         # Bandeau « et ensuite ? »
         self.banner = QFrame()
         self.banner.setObjectName("banner")
-        bl = QHBoxLayout(self.banner)
-        bl.setContentsMargins(14, 8, 8, 8)
+        bv = QVBoxLayout(self.banner)
+        bv.setContentsMargins(14, 8, 8, 8)
+        bv.setSpacing(6)
+        bl = QHBoxLayout()
         self.banner_lbl = QLabel("")
         self.banner_lbl.setTextFormat(Qt.RichText)
+        self.banner_lbl.setWordWrap(True)
         bl.addWidget(self.banner_lbl, 1)
-        self.banner_btns = QHBoxLayout()
-        bl.addLayout(self.banner_btns)
         bx = QPushButton("✕")
         bx.setFixedWidth(34)
         bx.setToolTip("Masquer")
         bx.clicked.connect(self.banner.hide)
-        bl.addWidget(bx)
+        bl.addWidget(bx, 0, Qt.AlignTop)
+        bv.addLayout(bl)
+        self.banner_bar = FlowBar(6, 6)
+        self.banner_btns = self.banner_bar.flow
+        bv.addWidget(self.banner_bar)
         self.banner.hide()
+        self.banner.installEventFilter(self)
         v.addWidget(self.banner)
 
         # Statistiques
         stats = QFrame()
+        self.stats_card = stats
         stats.setObjectName("card")
         sl = QHBoxLayout(stats)
         sl.setContentsMargins(16, 10, 16, 10)
@@ -2033,6 +2053,7 @@ class MainWindow(QMainWindow):
         self.logw = QTextEdit()
         self.logw.setReadOnly(True)
         self.logw.document().setMaximumBlockCount(5000)
+        self.logw.setMinimumHeight(40)
         ll.addWidget(self.logw, 1)
         bottom.addWidget(lcard)
         bottom.setSizes([420, 520])
@@ -2045,15 +2066,18 @@ class MainWindow(QMainWindow):
         pl.setContentsMargins(0, 0, 0, 0)
         self.prog = QProgressBar()
         self.prog.setTextVisible(False)
+        self.prog.setMinimumWidth(140)
         self.prog_lbl = _muted("", wrap=False)
+        self.prog_lbl.setMinimumWidth(0)
+        self.prog_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.btn_cancel = QPushButton("Annuler")
         self.btn_cancel.setObjectName("danger")
         self.btn_cancel.clicked.connect(self.cancel_job)
         self.btn_cancel.setVisible(False)
-        pl.addWidget(self.prog, 1)
-        pl.addWidget(self.prog_lbl)
+        pl.addWidget(self.prog, 2)
+        pl.addWidget(self.prog_lbl, 3)
         pl.addWidget(self.btn_cancel)
-        v.addWidget(pb)
+        v.insertWidget(0, pb)      # en haut : jamais masquée par la barre des tâches (masquage auto)
         return ws
 
     # ------------------------------------------------------------- Connexion
@@ -2287,6 +2311,7 @@ class MainWindow(QMainWindow):
                 b.setObjectName("primary")
             b.clicked.connect(fn)
             self.banner_btns.addWidget(b)
+        self.banner_bar.setVisible(bool(actions))
         self.banner.show()
 
     def _on_failed(self, msg: str):
@@ -2845,10 +2870,57 @@ class MainWindow(QMainWindow):
                 self.det_tbl.setItem(i, k, it)
 
     # ---------------------------------------------------------------- Paramètres
+    def eventFilter(self, obj, ev):
+        if obj is getattr(self, "banner", None) and ev.type() in (ev.Type.Show, ev.Type.Hide):
+            QTimer.singleShot(0, self._ensure_fits)
+        return super().eventFilter(obj, ev)
+
+    def _ensure_fits(self):
+        """Petits écrans : si le bandeau ferait dépasser la fenêtre de l'écran, on masque les compteurs."""
+        if not hasattr(self, "stats_card"):
+            return
+        scr = self.screen() or QApplication.primaryScreen()
+        if scr is None:
+            return
+        avail = scr.availableGeometry().height() - (self.frameGeometry().height() - self.height())
+        if self.banner.isVisible():
+            if self.minimumSizeHint().height() > avail and self.stats_card.isVisible():
+                self.stats_card.hide()
+                self._stats_hidden = True
+        elif getattr(self, "_stats_hidden", False):
+            self._stats_hidden = False
+            self.stats_card.show()
+        if self.height() > avail and not self.isMaximized():
+            self.resize(self.width(), max(avail, self.minimumSizeHint().height()))
+
+    def _fit_to_screen(self):
+        """La fenêtre ne doit jamais dépasser l'écran (barre des tâches, mise à l'échelle Windows)."""
+        if self.isMaximized() or self.isFullScreen():
+            return
+        scr = self.screen() or QApplication.primaryScreen()
+        if scr is None:
+            return
+        av = scr.availableGeometry()
+        fr = self.frameGeometry()
+        extra_w, extra_h = fr.width() - self.width(), fr.height() - self.height()
+        w = min(self.width(), av.width() - extra_w)
+        h = min(self.height(), av.height() - extra_h)
+        if (w, h) != (self.width(), self.height()):
+            self.resize(max(w, self.minimumSizeHint().width()), max(h, self.minimumSizeHint().height()))
+        fr = self.frameGeometry()
+        x = min(max(fr.x(), av.x()), av.right() - fr.width() + 1)
+        y = min(max(fr.y(), av.y()), av.bottom() - fr.height() + 1)
+        if (x, y) != (fr.x(), fr.y()):
+            self.move(max(x, av.x()), max(y, av.y()))
+        if self.minimumSizeHint().height() > av.height() - extra_h or \
+                self.minimumSizeHint().width() > av.width() - extra_w:
+            self.showMaximized()
+
     def _restore(self):
         g = self.settings.value("geometry")
         if g:
             self.restoreGeometry(g)
+        QTimer.singleShot(0, self._fit_to_screen)
         fmt = self.settings.value("read_fmt") or "ibm.1440"
         if fmt:
             self.r_pick.select_format(fmt)
@@ -3022,6 +3094,7 @@ class MainWindow(QMainWindow):
     def batch_convert(self, imgs):
         dlg = QDialog(self)
         dlg.setWindowTitle("Conversion par lot")
+        dlg.setMinimumWidth(520)
         lay = QVBoxLayout(dlg)
         lay.addWidget(_muted("Format de sortie (l'extension du préréglage est utilisée) :"))
         pick = FormatPicker()
