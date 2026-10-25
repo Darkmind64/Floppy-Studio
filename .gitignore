@@ -1,0 +1,9 @@
+__pycache__/
+build/
+dist/
+dist_setup/
+installer/
+*.spec
+*.log
+*.tgz
+md5s.txt
