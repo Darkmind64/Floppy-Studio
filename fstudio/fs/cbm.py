@@ -210,7 +210,7 @@ def probe(disk) -> List[FileSystem]:
             elif d[0x16500 + 2] not in (0x41, 0x44, 0x00) and disk.kind not in (".d64", ".d71"):
                 continue
             fs = CBMFS(d, m)
-            if fs.files or disk.kind in (".d64", ".d71", ".d81"):
+            if fs.files or disk.kind in (".d64", ".d71", ".d81") or m == "1581":
                 out.append(fs)
                 break
         except Exception:

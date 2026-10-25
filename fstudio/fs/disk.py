@@ -319,6 +319,39 @@ def _raw_geometry(size: int, ext: str):
     return None
 
 
+def _raw_from_diskdef(path: str, data: bytes, fmt: str, ext: str) -> Optional["Disk"]:
+    """Image brute au format greaseweazle (pistes dans l'ordre du diskdef, secteurs triés par ID)."""
+    try:
+        from ..formats import get_diskdef
+        dd = get_diskdef(fmt)
+        if dd is None:
+            return None
+        layout = []
+        for c in dd.tracks.cyls:
+            for h in dd.tracks.heads:
+                t = dd.mk_track(c, h)
+                if t is None or not hasattr(t, "sectors"):
+                    return None
+                layout.append((c, h, sorted((s.idam.r, s.idam.n, s.idam.h) for s in t.sectors)))
+    except Exception:
+        return None
+    if sum(128 << n for _, _, secs in layout for _, n, _ in secs) != len(data):
+        return None
+    # Faces inversées (ex. Commodore 1581 : face logique 0 = tête physique 1)
+    swapped = any(secs and secs[0][2] == (h ^ 1) for c, h, secs in layout if h in (0, 1)) and \
+        all(secs and secs[0][2] == (h ^ 1) for c, h, secs in layout if h in (0, 1))
+    d = Disk(path, ext, raw=None if swapped else data, fmt=fmt)
+    off = 0
+    for c, h, secs in layout:
+        out = []
+        for r, n, _ in secs:
+            sd = data[off: off + (128 << n)]
+            off += 128 << n
+            out.append(Sec(r, n, sd, not is_bad(sd)))
+        d.tracks[c, h ^ 1 if swapped else h] = out
+    return d
+
+
 def open_disk(path: str, fmt: Optional[str] = None) -> Disk:
     ext = os.path.splitext(path)[1].lower()
     with open(path, "rb") as f:
@@ -329,6 +362,10 @@ def open_disk(path: str, fmt: Optional[str] = None) -> Disk:
     if ext in RAW_EXT or (ext == ".dsk" and not head.startswith(b"MV")):
         with open(path, "rb") as f:
             data = f.read()
+        if fmt and ext not in (".fd", ".adf", ".st"):
+            d = _raw_from_diskdef(path, data, fmt, ext)
+            if d is not None:
+                return d
         if ext == ".dsk" or ext in RAW_EXT:
             geo = _raw_geometry(len(data), ext)
             if geo:
