@@ -402,6 +402,10 @@ def detokenize(platform: str, data: bytes, meta: dict, ext: str) -> Optional[tup
             tries.append(("BASIC Thomson", thomson))
     elif platform == "msx":
         tries.append(("MSX-BASIC", lambda d: microsoft(d, "msx")))
+    elif platform == "apple2":
+        if meta.get("type") == "A" or str(meta.get("type", "")).startswith("BAS"):
+            from .fs.apple import applesoft
+            tries.append(("Applesoft BASIC", applesoft))
     elif platform in ("pc", "atarist"):
         tries.append(("GW-BASIC", lambda d: microsoft(d, "gw")))
         if ext == "bas":

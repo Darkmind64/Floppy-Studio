@@ -959,6 +959,71 @@ class RecoverJob(Job):
         self.result.emit({"kind": "recover", "fixed": fixed, "left": left, "path": self.path})
 
 
+class CompareImagesJob(Job):
+    """Compare deux images piste par piste et secteur par secteur (hors lecteur)."""
+    title = "Comparaison d'images"
+    needs_drive = False
+
+    def __init__(self, dev, a: str, b: str, fmt: Optional[str] = None):
+        super().__init__(dev)
+        self.a, self.b, self.fmt = a, b, fmt
+
+    def work(self, _u):
+        from .fs import open_disk
+        da, db = open_disk(self.a, self.fmt), open_disk(self.b, self.fmt)
+        if not da.tracks or not db.tracks:
+            # images brutes sans géométrie : comparaison par blocs de 512 o
+            la, lb = da.linear(), db.linear()
+            diff = [i for i in range(0, max(len(la), len(lb)), 512) if la[i:i + 512] != lb[i:i + 512]]
+            self.info(f"Comparaison brute : {len(diff)} bloc(s) de 512 o différent(s)")
+            self.result.emit({"kind": "compare", "same": not diff, "diff": [f"+{i}" for i in diff[:200]],
+                              "only_a": 0, "only_b": 0, "total": max(len(la), len(lb)) // 512})
+            return
+        keys = sorted(set(da.tracks) | set(db.tracks))
+        diffs, only_a, only_b, total, same_tr = [], 0, 0, 0, 0
+        for i, (c, h) in enumerate(keys):
+            self.check()
+            self.progress.emit(i, len(keys))
+            sa = {x.r: x for x in da.track(c, h)}
+            sb = {x.r: x for x in db.track(c, h)}
+            ids = sorted(set(sa) | set(sb))
+            good, st = [], "ok"
+            for r in ids:
+                total += 1
+                x, y = sa.get(r), sb.get(r)
+                okx, oky = bool(x and x.ok), bool(y and y.ok)
+                if okx and oky and x.data == y.data:
+                    good.append(True)
+                    continue
+                good.append(False)
+                if okx and not oky:
+                    only_a += 1
+                    st = "retried" if st == "ok" else st
+                    diffs.append(f"{c}.{h}.{r} lisible seulement dans A")
+                elif oky and not okx:
+                    only_b += 1
+                    st = "retried" if st == "ok" else st
+                    diffs.append(f"{c}.{h}.{r} lisible seulement dans B")
+                elif okx and oky:
+                    st = "bad"
+                    diffs.append(f"{c}.{h}.{r} contenu différent")
+                else:
+                    st = "bad"
+                    diffs.append(f"{c}.{h}.{r} illisible dans les deux")
+            if all(good):
+                same_tr += 1
+            self.track_done.emit(TrackResult(c, h, st if ids else "empty", len(ids), good,
+                                             summary=f"{sum(good)}/{len(ids)} secteurs identiques"))
+        self.progress.emit(len(keys), len(keys))
+        msg = (f"{same_tr}/{len(keys)} pistes identiques ; {len(diffs)} secteur(s) diffèrent "
+               f"({only_a} lisibles seulement dans A, {only_b} seulement dans B)")
+        (self.ok if not diffs else self.warn)(msg)
+        for d in diffs[:60]:
+            self.info("  " + d)
+        self.result.emit({"kind": "compare", "same": not diffs, "diff": diffs, "only_a": only_a,
+                          "only_b": only_b, "total": total})
+
+
 # --------------------------------------------------------------------------
 # Surveillance de l'insertion
 # --------------------------------------------------------------------------

@@ -66,7 +66,7 @@ def native_image(disk: Disk, fs: FileSystem) -> str:
     src_ext = os.path.splitext(disk.path)[1].lower()
     wanted = {"pc": (".img", ".ima"), "msx": (".dsk", ".img"), "atarist": (".st", ".msa"),
               "amiga": (".adf",), "c64": (".d64", ".d71", ".d81"), "thomson": (".fd",),
-              "cpc": (".dsk", ".edsk")}.get(plat, (".img",))
+              "cpc": (".dsk", ".edsk"), "apple2": (".dsk", ".do", ".po", ".2mg")}.get(plat, (".img",))
     d = os.path.join(EM.session_dir(), "images")
     os.makedirs(d, exist_ok=True)
     base = re.sub(r"[^A-Za-z0-9_-]", "_", os.path.splitext(os.path.basename(disk.path))[0])[:40]
@@ -171,7 +171,7 @@ class ImageView(QScrollArea):
         self.lbl.setAlignment(Qt.AlignCenter)
         self.setWidget(self.lbl)
         self.setWidgetResizable(True)
-        self.setStyleSheet("background:#0b0d11;")
+        self.setStyleSheet(f"background:{T.DEEP};")
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -258,7 +258,7 @@ class WaveWidget(QWidget):
 
     def paintEvent(self, _):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#0b0d11"))
+        p.fillRect(self.rect(), QColor(T.DEEP))
         if not self.samples:
             return
         p.setPen(QPen(QColor(T.ACCENT), 1))
@@ -382,6 +382,8 @@ class HexPane(QWidget):
 # Carte d'occupation du volume
 # --------------------------------------------------------------------------
 OCC_COLORS = {"sys": "#4c78d8", "free": "#20262f", "bad": "#f0524f", "used": "#6b7280"}
+if T.MODE == "light":
+    OCC_COLORS.update({"free": "#e3e7ed", "used": "#9aa3b0"})
 
 
 class OccupancyMap(QWidget):
@@ -831,6 +833,7 @@ class EmulatorDialog(QDialog):
 class ExplorerView(QWidget):
     log = Signal(str, str)
     write_request = Signal(str, str, str)     # chemin image, format greaseweazle, pistes
+    loaded_path = Signal(str)                 # image ouverte avec succès (pour le catalogue)
 
     def __init__(self):
         super().__init__()
@@ -948,9 +951,8 @@ class ExplorerView(QWidget):
         self.tree.setUniformRowHeights(True)
         self.tree.setAlternatingRowColors(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.tree.setStyleSheet("QTreeWidget{background:#12161c;border:none;}"
-                                "QTreeWidget::item{padding:3px 2px;}"
-                                "QTreeWidget::item:selected{background:#223152;}")
+        self.tree.setStyleSheet(f"QTreeWidget{{background:{T.INPUT};border:none;}}"
+                                "QTreeWidget::item{padding:3px 2px;}")
         self.tree.currentItemChanged.connect(self._on_current)
         self.tree.itemDoubleClicked.connect(self._on_double)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -970,10 +972,7 @@ class ExplorerView(QWidget):
         pl.addWidget(self.ptitle)
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
-        self.tabs.setStyleSheet("QTabBar::tab{padding:6px 14px;background:#1b2029;color:#8b95a5;"
-                                "border:none;margin-right:2px;border-top-left-radius:6px;"
-                                "border-top-right-radius:6px;}"
-                                "QTabBar::tab:selected{background:#223152;color:#e6e9ef;}")
+        pass
         pl.addWidget(self.tabs, 1)
         split.addWidget(pcard)
         split.setSizes([520, 560])
@@ -1024,6 +1023,17 @@ class ExplorerView(QWidget):
             self._update_buttons()
             return
         self._select_volume(0)
+        self.loaded_path.emit(disk.path)
+        sel = getattr(self, "pending_select", None)
+        self.pending_select = None
+        if sel:
+            for k, fs in enumerate(vols):
+                for e in fs.root.walk():
+                    if sel == e.path or sel.endswith("/" + e.path) and (fs.volume_name + "/" + e.path) == sel:
+                        if k != self.vol_cb.currentIndex():
+                            self.vol_cb.setCurrentIndex(k)
+                        self.goto_entry(e)
+                        break
         names = ", ".join(fs.title() for fs in vols)
         self.log.emit(f"Explorateur : {os.path.basename(disk.path)} — {names}", "ok")
 

@@ -24,7 +24,7 @@ def count_bad(data: bytes) -> int:
 
 
 RAW_EXT = {".img", ".ima", ".st", ".adf", ".d64", ".d71", ".d81", ".fd", ".vfd", ".flp",
-           ".ssd", ".dsd", ".do", ".po", ".mgt", ".sf7", ".2d", ".xfd", ".atr_raw"}
+           ".ssd", ".dsd", ".do", ".po", ".mgt", ".sf7", ".2d", ".xfd", ".atr_raw", ".2mg"}
 
 
 @dataclass

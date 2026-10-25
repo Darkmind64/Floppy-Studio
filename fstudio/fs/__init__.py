@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-from . import akai, amiga, cbm, cpm, fat, thomson
+from . import akai, amiga, apple, cbm, cpm, fat, thomson
 from .base import Entry, FileSystem, human
 from .disk import Disk, open_disk, write_edsk
 
-PROBES = [cbm.probe, amiga.probe, fat.probe, thomson.probe, cpm.probe, akai.probe]
+PROBES = [cbm.probe, apple.probe, amiga.probe, fat.probe, thomson.probe, cpm.probe, akai.probe]
 
 
 def detect(disk: Disk) -> List[FileSystem]:

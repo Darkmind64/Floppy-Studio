@@ -12,7 +12,8 @@ from typing import Dict, List, Optional
 from PySide6.QtCore import QSettings
 
 PLATFORM_NAMES = {"pc": "PC / MS-DOS", "atarist": "Atari ST", "amiga": "Amiga", "c64": "Commodore 64",
-                  "cpc": "Amstrad CPC", "thomson": "Thomson", "msx": "MSX", "akai": "Akai"}
+                  "cpc": "Amstrad CPC", "thomson": "Thomson", "msx": "MSX", "akai": "Akai",
+                  "apple2": "Apple II"}
 
 
 @dataclass
@@ -42,6 +43,8 @@ DEFAULTS: List[Emu] = [
     Emu("thomson", "DCMOTO / Teo", "", '"{image}"', "", "dcmoto.exe;dcmoto_fr.exe;teo.exe",
         "http://dcmoto.free.fr"),
     Emu("msx", "openMSX", "", '-diska "{image}"', "", "openmsx.exe", "https://openmsx.org"),
+    Emu("apple2", "AppleWin", "", '-d1 "{image}"', "", "Applewin.exe;applewin.exe",
+        "https://github.com/AppleWin/AppleWin"),
 ]
 
 SEARCH_DIRS = [os.environ.get("ProgramFiles", r"C:\Program Files"),

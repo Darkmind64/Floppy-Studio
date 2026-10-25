@@ -107,11 +107,11 @@ IMAGE_DESC = {
     ".st": "Atari ST", ".msa": "Atari ST compressée (MSA)",
     ".adf": "Amiga Disk File", ".d64": "Commodore 1541", ".d71": "Commodore 1571",
     ".d81": "Commodore 1581", ".fd": "Thomson FD", ".dsk": "DSK",
-    ".edsk": "Extended DSK (Amstrad CPC)", ".imd": "ImageDisk (IMD)",
+    ".edsk": "Extended DSK (Amstrad CPC)", ".2mg": "Apple II 2IMG", ".imd": "ImageDisk (IMD)",
     ".td0": "Teledisk", ".hfe": "HxC (HFE)", ".scp": "SuperCard Pro (flux brut)",
     ".raw": "KryoFlux stream (flux brut)", ".ipf": "CAPS/SPS IPF",
-    ".dmk": "DMK", ".d88": "D88", ".hdm": "PC-98 HDM", ".xdf": "XDF",
-    ".do": "Apple II DOS", ".po": "Apple II ProDOS", ".a2r": "Applesauce A2R",
+    ".dmk": "DMK (TRS-80, MSX…)", ".d88": "D88", ".hdm": "PC-98 HDM", ".xdf": "XDF",
+    ".do": "Apple II ordre DOS", ".po": "Apple II ordre ProDOS", ".a2r": "Applesauce A2R",
 }
 
 FLUX_EXTS = {".scp", ".hfe", ".raw", ".a2r", ".ipf", ".ctr"}
@@ -287,8 +287,8 @@ def image_class(path: str):
     return util.get_image_class(path)
 
 
-def image_filter() -> str:
-    exts = sorted(util.image_types)
+def image_filter(explore: bool = False) -> str:
+    exts = sorted(set(util.image_types) | ({".2mg", ".ima", ".vfd", ".flp", ".edsk"} if explore else set()))
     allf = " ".join("*" + e for e in exts)
     lines = [f"Toutes les images ({allf})"]
     for e in exts:

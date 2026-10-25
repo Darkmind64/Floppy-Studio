@@ -128,6 +128,13 @@ def b32(b, o):
 
 
 def human(n: int) -> str:
+    from .. import i18n
+    if i18n.LANG == "en":
+        if n < 1024:
+            return f"{n} B"
+        if n < 1024 * 1024:
+            return f"{n / 1024:.1f} KB"
+        return f"{n / 1048576:.2f} MB"
     if n < 1024:
         return f"{n} o"
     if n < 1024 * 1024:

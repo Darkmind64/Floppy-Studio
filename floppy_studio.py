@@ -16,7 +16,11 @@ def main():
     ico = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))), "icon.ico")
     if os.path.exists(ico):
         app.setWindowIcon(QIcon(ico))
-    theme.apply(app)
+    from PySide6.QtCore import QSettings
+    from fstudio import i18n
+    st = QSettings("FloppyStudio", "FloppyStudio")
+    theme.apply(app, st.value("theme", "dark"))
+    i18n.install(app, st.value("lang", "fr"))
     w = MainWindow()
     w.show()
     args = [a for a in sys.argv[1:] if os.path.isfile(a)]

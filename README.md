@@ -36,7 +36,13 @@ automatiquement. Les mêmes fonctions d'exploration et de conversion marchent sa
 - **Qualité et protections** : qualité du signal piste par piste (vue « Santé »), fiche détaillée des
   secteurs (ID, taille, CRC), détection des protections (secteurs faibles, tailles non standard, IDs
   falsifiés, pistes longues, CRC volontaires…), analyse d'images flux sans lecteur, rapport HTML / PDF.
-- **Lecture par lot** avec détection de l'insertion, **calibrage** du lecteur en direct.
+- **Lecture par lot** avec détection de l'insertion, **profils de lecture**, flux brut conservé et
+  re-décodable, **calibrage** du lecteur en direct.
+- **Catalogue** de la collection : recherche dans les titres, notes et noms de fichiers de toutes les
+  images, doublons (images et fichiers), export CSV.
+- **Comparaison de deux images** piste par piste et fusion des meilleures lectures.
+- Interface en **français ou anglais**, **thème sombre ou clair**, raccourcis clavier, aide intégrée (F1),
+  **mises à jour automatiques** depuis GitHub.
 - **Convertir** entre formats d'image sans le lecteur.
 - **Explorer** les fichiers d'une image ou de la disquette insérée : arborescence, aperçu (texte avec
   jeux de caractères au choix, listings BASIC Locomotive (CPC), Thomson, MSX, GW-BASIC et C64, images IFF/PCX/Degas/NEO/écran CPC/Koala, sons WAV/8SVX/
@@ -44,7 +50,9 @@ automatiquement. Les mêmes fonctions d'exploration et de conversion marchent sa
   converti PNG/WAV/TXT), ouverture avec l'application Windows associée, exécution dans un émulateur
   (DOSBox, Hatari, WinUAE, VICE, WinAPE, DCMOTO, openMSX — configurables).
   Systèmes de fichiers : FAT12/16 (PC, Atari ST, MSX, synthés DOS), AmigaDOS OFS/FFS, Commodore
-  1541/1571/1581, DOS BASIC Thomson, Amstrad CPC (AMSDOS/CP/M), Akai S900/S1000/S3000 (expérimental).
+  1541/1571/1581, DOS BASIC Thomson, Amstrad CPC (AMSDOS/CP/M), Apple II DOS 3.3 / ProDOS,
+  Akai S900/S1000/S3000 (expérimental). Conteneurs : IMG, ST, MSA, ADF, D64/D81, FD, DSK/EDSK, IMD,
+  TD0, DMK, DO/PO/2MG, HFE, SCP, KryoFlux.
   Ajout / suppression de fichiers et dossiers (FAT avec noms longs, CPC, Amiga, Thomson, Commodore),
   enregistrement de l'image ou écriture directe sur la disquette ; carte d'occupation du volume,
   fichiers supprimés récupérables, recherche texte/hexa, éditeur de secteurs, désassembleur

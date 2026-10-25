@@ -279,6 +279,15 @@ def guess(platform: str, data: bytes, meta: dict, ext: str, raw: bytes = b"") ->
             la = data[0] | data[1] << 8
             return "6502", data[2:], la, f"Chargé en ${la:04X}"
         return None
+    if platform == "apple2":
+        t = str(meta.get("type", ""))
+        if t == "B" or t.startswith(("BIN", "SYS")):
+            la = meta.get("chargement") or meta.get("aux") or "$2000"
+            org = int(la.strip("$"), 16)
+            if t.startswith("SYS"):
+                org = 0x2000
+            return "6502", data, org, f"Binaire Apple II chargé en ${org:04X}"
+        return None
     if platform in ("atarist", "pc", "msx") and data[:2] == b"\x60\x1A" and len(data) > 28:
         tlen = int.from_bytes(data[2:6], "big")
         return "68000", data[28:28 + tlen], 0, f"Programme TOS : segment texte {tlen} o"

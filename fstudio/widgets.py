@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolTi
                                QVBoxLayout, QWidget)
 
 from . import theme as T
+from .i18n import tr
 from .engine import HIST_BINS, HIST_STEP_US, TrackResult
 
 
@@ -91,7 +92,7 @@ class TrackMap(QWidget):
     @staticmethod
     def health_color(q: float) -> QColor:
         if q <= 0:
-            return QColor("#3a4150")
+            return QColor(T.STATUS["empty"])
         # 80 % → rouge, 90 % → orange, 98 % → vert
         t = max(0.0, min(1.0, (q - 80) / 18))
         if t < 0.5:
@@ -243,7 +244,7 @@ class TrackMap(QWidget):
         for h in range(2):
             top = tm + h * (hh + gap)
             p.setPen(QColor(T.MUTED))
-            p.drawText(QRectF(0, top, lm - 8, hh), Qt.AlignRight | Qt.AlignVCenter, f"Face {h}")
+            p.drawText(QRectF(0, top, lm - 8, hh), Qt.AlignRight | Qt.AlignVCenter, tr(f"Face {h}"))
             pad = 1.0 if cw > 5 else 0.5
             for c in range(self.cyls):
                 x = lm + c * cw
@@ -282,7 +283,7 @@ class TrackMap(QWidget):
         for h, cx in enumerate(cxs):
             # fond
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#0b0d11"))
+            p.setBrush(QColor(T.DEEP))
             p.drawEllipse(QPointF(cx, cy), ro + 4, ro + 4)
             for c in range(self.cyls):
                 r_outer = ro - c * rw
@@ -304,12 +305,12 @@ class TrackMap(QWidget):
                     self._arc(p, cx, cy, r_mid, max(width, 1.5), 0, 360, QColor("white"))
             # moyeu
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#1d222b"))
+            p.setBrush(QColor(T.RING))
             p.drawEllipse(QPointF(cx, cy), ri - 3, ri - 3)
-            p.setBrush(QColor("#0f1115"))
+            p.setBrush(QColor(T.BG))
             p.drawEllipse(QPointF(cx, cy), ri * 0.35, ri * 0.35)
             p.setPen(QColor(T.MUTED))
-            p.drawText(QRectF(cx - 60, cy - ro - 22, 120, 16), Qt.AlignCenter, f"Face {h}")
+            p.drawText(QRectF(cx - 60, cy - ro - 22, 120, 16), Qt.AlignCenter, tr(f"Face {h}"))
 
     @staticmethod
     def _arc(p: QPainter, cx, cy, r, width, start_deg, span_deg, col: QColor):
@@ -371,7 +372,7 @@ class FluxHistogram(QWidget):
         p.setFont(f)
         p.setPen(QColor(T.MUTED))
         p.drawText(QRectF(lm, 0, w, 16), Qt.AlignLeft | Qt.AlignVCenter,
-                   self.title or "Histogramme des intervalles de flux")
+                   tr(self.title or "Histogramme des intervalles de flux"))
         # repères µs
         max_us = HIST_BINS * HIST_STEP_US
         for us in (2, 4, 6, 8, 10, 12, 14):
@@ -381,7 +382,7 @@ class FluxHistogram(QWidget):
             p.setPen(QColor(T.MUTED))
             p.drawText(QRectF(x - 20, tm + h + 2, 40, 16), Qt.AlignCenter, f"{us} µs")
         if not self.hist or max(self.hist) == 0:
-            p.drawText(QRectF(lm, tm, w, h), Qt.AlignCenter, "Cliquez une piste lue pour voir son flux")
+            p.drawText(QRectF(lm, tm, w, h), Qt.AlignCenter, tr("Cliquez une piste lue pour voir son flux"))
             return
         mx = math.log1p(max(self.hist))
         bw = w / len(self.hist)
@@ -427,7 +428,7 @@ class RpmChart(QWidget):
         p.setFont(f)
         if not self.vals:
             p.setPen(QColor(T.MUTED))
-            p.drawText(self.rect(), Qt.AlignCenter, "Aucune mesure")
+            p.drawText(self.rect(), Qt.AlignCenter, tr("Aucune mesure"))
             return
         if self.fixed:
             lo, nominal, hi = self.fixed

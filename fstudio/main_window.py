@@ -11,7 +11,7 @@ from PySide6.QtGui import QAction, QColor, QFont, QTextCursor
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QDialog,
                                QComboBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
                                QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                               QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
+                               QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
                                QSizePolicy, QSpinBox, QSplitter, QStackedWidget,
                                QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout,
@@ -23,13 +23,17 @@ from . import emulators as EM
 from . import formats as F
 from . import theme as T
 from . import analysis as A
+from . import i18n
 from .explorer import EmulatorDialog, ExplorerView
+from .catalog import Catalog
+from .catalog_view import CatalogView
 from .fs import mkfs as MK
 from .fs import open_disk
 from .widgets import FluxHistogram, Legend, RpmChart, StatTile, TrackMap, card
 
 ANALYSE_ROW = 3
 EXPLORER_ROW = 4
+CATALOG_ROW = 5
 
 
 def _row(*widgets, stretch_last=False):
@@ -149,12 +153,22 @@ class MainWindow(QMainWindow):
         self.explorer = ExplorerView()
         self.explorer.log.connect(self.log)
         self.explorer.write_request.connect(self.write_image_now)
+        self.explorer.loaded_path.connect(self._catalog_auto)
+        self.cat = Catalog()
+        self.catalog = CatalogView(self.cat)
+        self.catalog.log.connect(self.log)
+        self.catalog.explore_request.connect(self._explore_from_catalog)
         self.right.addWidget(self.explorer)
+        self.right.addWidget(self.catalog)
         body.addWidget(self.right)
         body.setStretchFactor(1, 1)
         body.setSizes([540, 860])
 
         self.setAcceptDrops(True)
+        from .updater import Updater
+        self.updater = Updater(self, __version__)
+        QTimer.singleShot(4000, self.updater.auto_check)
+        self._install_shortcuts()
         self.statusBar().showMessage("Prêt")
         self.refresh_ports(auto_connect=True)
         self._restore()
@@ -203,15 +217,32 @@ class MainWindow(QMainWindow):
         l.addWidget(self.drive_cb)
         l.addStretch()
         l.addWidget(self.chip)
+        bh = QPushButton("?")
+        bh.setFixedWidth(36)
+        bh.setToolTip("Aide (F1)")
+        bh.clicked.connect(lambda: self.show_help())
+        bm = QPushButton("⚙")
+        bm.setFixedWidth(52)
+        bm.setToolTip("Préférences, mises à jour…")
+        menu = QMenu(bm)
+        menu.addAction("⚙  Préférences…", self.show_prefs)
+        menu.addAction("🔄  Rechercher des mises à jour", lambda: self.updater.check(silent=False))
+        menu.addAction("⌨  Raccourcis clavier", lambda: self.show_help("Raccourcis clavier"))
+        menu.addAction("❓  Aide", lambda: self.show_help())
+        menu.addSeparator()
+        menu.addAction("ℹ  À propos", self.show_about)
+        bm.setMenu(menu)
+        l.addWidget(bh)
+        l.addWidget(bm)
         return bar
 
     def _chip(self, on: bool, text: Optional[str] = None):
         if on:
             self.chip.setText(text or "Connecté")
-            self.chip.setStyleSheet("background:#123326; color:#4fd18f;")
+            self.chip.setStyleSheet(f"background:{T.CHIP_ON_BG}; color:{T.CHIP_ON};")
         else:
             self.chip.setText(text or "Déconnecté")
-            self.chip.setStyleSheet("background:#2a1d22; color:#ff8c88;")
+            self.chip.setStyleSheet(f"background:{T.CHIP_OFF_BG}; color:{T.CHIP_OFF};")
 
     def _build_sidebar(self):
         side = QWidget()
@@ -227,15 +258,15 @@ class MainWindow(QMainWindow):
         self.nav.setFixedWidth(132)
         self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         for icon, name in [("📥", "Lire"), ("📤", "Écrire"), ("🧹", "Formater"), ("🔍", "Analyser"),
-                           ("📂", "Explorer"), ("📑", "Copier"), ("🛠", "Outils"), ("🔁", "Convertir"),
-                           ("ℹ", "Appareil")]:
-            self.nav.addItem(QListWidgetItem(f"{icon}  {name}"))
+                           ("📂", "Explorer"), ("📚", "Catalogue"), ("📑", "Copier"), ("🛠", "Outils"),
+                           ("🔁", "Convertir"), ("ℹ", "Appareil")]:
+            self.nav.addItem(QListWidgetItem(f"{icon}  {i18n.tr(name)}"))
         l.addWidget(self.nav)
 
         self.pages = QStackedWidget()
         for build in (self._page_read, self._page_write, self._page_format, self._page_analyse,
-                      self._page_explore, self._page_copy, self._page_tools, self._page_convert,
-                      self._page_device):
+                      self._page_explore, self._page_catalog, self._page_copy, self._page_tools,
+                      self._page_convert, self._page_device):
             sc = QScrollArea()
             sc.setWidgetResizable(True)
             sc.setFrameShape(QFrame.NoFrame)
@@ -279,6 +310,23 @@ class MainWindow(QMainWindow):
     # --- Lire
     def _page_read(self):
         w, v = self._page("Lire une disquette", "Crée une image disque à partir de la disquette insérée.")
+        g = QGroupBox("Profil")
+        gl = QHBoxLayout(g)
+        self.r_prof = QComboBox()
+        self.r_prof.setToolTip("Réglages enregistrés : format, relectures, pistes, dossier…")
+        self.r_prof.activated.connect(self._apply_profile)
+        bs = QPushButton("💾")
+        bs.setFixedWidth(40)
+        bs.setToolTip("Enregistrer les réglages actuels comme profil")
+        bs.clicked.connect(self._save_profile)
+        bd = QPushButton("🗑")
+        bd.setFixedWidth(40)
+        bd.setToolTip("Supprimer le profil sélectionné")
+        bd.clicked.connect(self._del_profile)
+        gl.addWidget(self.r_prof, 1)
+        gl.addWidget(bs)
+        gl.addWidget(bd)
+        v.addWidget(g)
         g = QGroupBox("Format")
         gl = QVBoxLayout(g)
         self.r_pick = FormatPicker()
@@ -338,6 +386,11 @@ class MainWindow(QMainWindow):
         b = QPushButton("📂  Explorer l'image lue")
         b.clicked.connect(lambda: self._explore_last())
         v.addWidget(b)
+        b = QPushButton("♻  Re-décoder le flux sauvegardé…")
+        b.setToolTip("Recrée une image à partir d'un flux brut (.scp, .hfe…) avec un autre format,\n"
+                     "sans relire la disquette")
+        b.clicked.connect(self.redecode_flux)
+        v.addWidget(b)
 
         g = QGroupBox("Lecture par lot")
         gl = QVBoxLayout(g)
@@ -353,6 +406,109 @@ class MainWindow(QMainWindow):
         v.addWidget(g)
         v.addStretch()
         return w
+
+    # --- Profils de lecture
+    def _profiles(self) -> dict:
+        import json
+        try:
+            return json.loads(self.settings.value("read_profiles", "{}") or "{}")
+        except Exception:
+            return {}
+
+    def _fill_profiles(self, select: str = ""):
+        self.r_prof.blockSignals(True)
+        self.r_prof.clear()
+        self.r_prof.addItem("— Réglages actuels —", "")
+        for name in sorted(self._profiles(), key=str.lower):
+            self.r_prof.addItem(name, name)
+        i = self.r_prof.findData(select)
+        self.r_prof.setCurrentIndex(max(i, 0))
+        self.r_prof.blockSignals(False)
+
+    def _save_profile(self):
+        import json
+        from PySide6.QtWidgets import QInputDialog
+        pr = self.r_pick.preset()
+        cur = self.r_prof.currentData() or (F.label_for(pr.fmt) if pr and pr.fmt else "")
+        name, ok = QInputDialog.getText(self, "Profil de lecture", "Nom du profil :", text=cur or "")
+        if not ok or not name.strip():
+            return
+        path = self.r_path.text().strip()
+        prof = {"fmt": pr.fmt if pr else None, "preset": pr.label if pr else "",
+                "revs": self.r_revs.value(), "retries": self.r_retries.value(), "seek": self.r_seek.value(),
+                "tracks": self.r_tracks.text().strip(), "flux": self.r_flux.isChecked(),
+                "deep": self.r_deep.isChecked(), "auto": self.r_auto.isChecked(),
+                "dir": os.path.dirname(path) if path else self._last_dir()}
+        allp = self._profiles()
+        allp[name.strip()] = prof
+        self.settings.setValue("read_profiles", json.dumps(allp))
+        self._fill_profiles(name.strip())
+        self.log(f"Profil « {name.strip()} » enregistré", "ok")
+
+    def _del_profile(self):
+        import json
+        name = self.r_prof.currentData()
+        if not name:
+            return
+        allp = self._profiles()
+        allp.pop(name, None)
+        self.settings.setValue("read_profiles", json.dumps(allp))
+        self._fill_profiles()
+
+    def _apply_profile(self, _i=None):
+        name = self.r_prof.currentData()
+        p = self._profiles().get(name) if name else None
+        if not p:
+            return
+        if p.get("fmt") is not None:
+            self.r_pick.select_format(p["fmt"])
+        elif p.get("preset"):
+            for i, plat in enumerate(F.platforms()):
+                for j, pr in enumerate(plat.presets):
+                    if pr.label == p["preset"]:
+                        self.r_pick.plat.setCurrentIndex(i)
+                        self.r_pick.fmt.setCurrentIndex(j)
+        self.r_revs.setValue(int(p.get("revs", 0)))
+        self.r_retries.setValue(int(p.get("retries", 3)))
+        self.r_seek.setValue(int(p.get("seek", 1)))
+        self.r_tracks.setText(p.get("tracks", ""))
+        self.r_flux.setChecked(bool(p.get("flux")))
+        self.r_deep.setChecked(bool(p.get("deep")))
+        self.r_auto.setChecked(bool(p.get("auto", True)))
+        if p.get("dir") and os.path.isdir(p["dir"]):
+            self._profile_dir = p["dir"]
+        self._read_fmt_changed()
+        self.log(f"Profil « {name} » appliqué", "info")
+
+    def redecode_flux(self):
+        src = self._last_flux if getattr(self, "_last_flux", None) and os.path.isfile(self._last_flux) else ""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Re-décoder un flux")
+        lay = QVBoxLayout(dlg)
+        edit = QLineEdit(src)
+        edit.setPlaceholderText("Flux brut (.scp, .hfe, .raw…)")
+        bb = QPushButton("…")
+        bb.setFixedWidth(40)
+        bb.clicked.connect(lambda: self._browse_open(edit))
+        lay.addWidget(_row(edit, bb))
+        pick = FormatPicker()
+        cur = self.r_pick.preset()
+        if cur and cur.fmt:
+            pick.select_format(cur.fmt)
+        lay.addWidget(pick)
+        go = QPushButton("♻  Décoder et explorer")
+        go.setObjectName("primary")
+        go.clicked.connect(dlg.accept)
+        lay.addWidget(go)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        p, pr = edit.text().strip(), pick.preset()
+        if not os.path.isfile(p) or pr is None or not pr.fmt:
+            QMessageBox.warning(self, APP_NAME, "Choisissez un flux et un format décodé.")
+            return
+        dst = os.path.splitext(p)[0] + "_" + pr.fmt.replace(".", "_") + pr.ext
+        self._explore_after_convert = dst
+        self.run_job(E.ConvertJob(self.dev, p, dst, pr.fmt), f"Décodage ← {os.path.basename(p)}")
 
     def _batch_continue(self):
         if not getattr(self, "_batch_active", False):
@@ -674,8 +830,56 @@ class MainWindow(QMainWindow):
         self.c_rec_lbl = _muted("")
         gl.addWidget(self.c_rec_lbl)
         v.addWidget(g)
+
+        g = QGroupBox("Comparer deux images")
+        gl = QVBoxLayout(g)
+        self.c_ia, self.c_ib = QLineEdit(), QLineEdit()
+        for lab, ed in (("A", self.c_ia), ("B", self.c_ib)):
+            ed.setPlaceholderText(f"Image {lab}…")
+            bb = QPushButton("…")
+            bb.setFixedWidth(40)
+            bb.clicked.connect(lambda _=False, e=ed: self._browse_open(e))
+            gl.addWidget(_row(QLabel(lab), ed, bb))
+        b = QPushButton("⚖  Comparer piste par piste")
+        b.clicked.connect(self.start_compare_images)
+        gl.addWidget(b)
+        b = QPushButton("🧬  Fusionner B dans une copie de A")
+        b.setToolTip("Crée « A_fusion » : secteurs illisibles de A remplacés par ceux de B")
+        b.clicked.connect(self.merge_images)
+        gl.addWidget(b)
+        self.c_cmp2_lbl = _muted("Vert : identique · orange : lisible d'un seul côté · rouge : différent.")
+        gl.addWidget(self.c_cmp2_lbl)
+        v.addWidget(g)
         v.addStretch()
         return w
+
+    def start_compare_images(self):
+        a, b = self.c_ia.text().strip(), self.c_ib.text().strip()
+        if not (os.path.isfile(a) and os.path.isfile(b)):
+            QMessageBox.warning(self, APP_NAME, "Choisissez les deux images.")
+            return
+        pr = self.cp_pick.preset()
+        fmt = pr.fmt if pr and pr.fmt and (F.is_flux_image(a) or F.is_flux_image(b)) else None
+        self._reset_stats(80, [0, 1], 0, None)
+        self.map.set_health(False)
+        self._health_btn.setChecked(False)
+        self.c_cmp2_lbl.setText("Comparaison…")
+        self.run_job(E.CompareImagesJob(self.dev, a, b, fmt), f"Comparaison {os.path.basename(a)} ↔ "
+                                                              f"{os.path.basename(b)}")
+
+    def merge_images(self):
+        import shutil
+        a, b = self.c_ia.text().strip(), self.c_ib.text().strip()
+        pr = self.cp_pick.preset()
+        if not (os.path.isfile(a) and os.path.isfile(b)) or pr is None or not pr.fmt or pr.fmt == "ibm.scan":
+            QMessageBox.warning(self, APP_NAME, "Choisissez les deux images (brutes) et leur format exact "
+                                "dans « Format de la disquette ».")
+            return
+        base, ext = os.path.splitext(a)
+        dst = base + "_fusion" + ext
+        shutil.copyfile(a, dst)
+        self.c_rec.setText(dst)
+        self.run_job(E.RecoverJob(self.dev, self._drive(), dst, pr.fmt, merge=[b]), "Fusion A + B")
 
     def _rec_check(self):
         p = self.c_rec.text().strip()
@@ -997,6 +1201,53 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     # --- Explorer
+    # --- Catalogue
+    def _page_catalog(self):
+        w, v = self._page("Catalogue", "Toutes vos images : recherche, notes, doublons.")
+        b = QPushButton("➕  Ajouter des images…")
+        b.setObjectName("primary")
+        b.clicked.connect(self._cat_add_files)
+        v.addWidget(b)
+        b = QPushButton("📁  Ajouter un dossier (récursif)…")
+        b.clicked.connect(self._cat_add_dir)
+        v.addWidget(b)
+        b = QPushButton("🧹  Retirer les images introuvables")
+        b.clicked.connect(lambda: self.catalog.purge())
+        v.addWidget(b)
+        g = QGroupBox("Options")
+        gl = QVBoxLayout(g)
+        self.cat_auto = QCheckBox("Ajout auto. des images lues/ouvertes")
+        self.cat_auto.setChecked(self.settings.value("cat_auto", "true") == "true")
+        self.cat_auto.toggled.connect(lambda on: self.settings.setValue("cat_auto", "true" if on else "false"))
+        gl.addWidget(self.cat_auto)
+        v.addWidget(g)
+        v.addWidget(_muted("Double-clic sur une image ou un fichier trouvé : ouverture dans l'explorateur. "
+                           "Le titre et les notes se modifient directement dans le tableau. La base est "
+                           "enregistrée dans le profil Windows de l'utilisateur."))
+        v.addStretch()
+        return w
+
+    def _cat_add_files(self):
+        ps, _ = QFileDialog.getOpenFileNames(self, "Ajouter au catalogue", self._last_dir(), F.image_filter(True))
+        if ps:
+            self.catalog.add_paths(ps)
+
+    def _cat_add_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "Dossier d'images", self._last_dir())
+        if d:
+            self.catalog.add_paths([d])
+
+    def _catalog_auto(self, path: str, flux: str = ""):
+        if self.cat_auto.isChecked() and os.path.isfile(path):
+            self.catalog.add_paths([path], {path: {"flux": flux}} if flux else None, quiet=True)
+
+    def _explore_from_catalog(self, path: str, fpath: str):
+        if not os.path.isfile(path):
+            QMessageBox.warning(self, APP_NAME, f"Image introuvable :\n{path}")
+            return
+        self.explorer.pending_select = fpath or None
+        self.explore(path)
+
     def _page_explore(self):
         w, v = self._page("Explorer", "Parcourt les fichiers d'une image : aperçu, export, exécution.")
         b = QPushButton("📂  Ouvrir une image…")
@@ -1037,13 +1288,13 @@ class MainWindow(QMainWindow):
         v.addWidget(b)
         v.addWidget(_muted("Systèmes reconnus : FAT12/16 (PC, Atari ST, MSX, synthés DOS), AmigaDOS OFS/FFS, "
                            "Commodore 1541/1571/1581, DOS BASIC Thomson, Amstrad CPC (AMSDOS/CP/M), "
-                           "Akai S900/S1000/S3000 (expérimental)."))
+                           "Apple II DOS 3.3/ProDOS, Akai S900/S1000/S3000 (expérimental)."))
         v.addStretch()
         return w
 
     def _nav_changed(self, row):
         if hasattr(self, "right"):
-            self.right.setCurrentIndex(1 if row == EXPLORER_ROW else 0)
+            self.right.setCurrentIndex(1 if row == EXPLORER_ROW else 2 if row == CATALOG_ROW else 0)
 
     def _recent_list(self):
         r = self.settings.value("recent_images") or []
@@ -1058,7 +1309,7 @@ class MainWindow(QMainWindow):
             self.x_recent.addItem(it)
 
     def _explore_browse(self):
-        p, _ = QFileDialog.getOpenFileName(self, "Ouvrir une image", self._last_dir(), F.image_filter())
+        p, _ = QFileDialog.getOpenFileName(self, "Ouvrir une image", self._last_dir(), F.image_filter(True))
         if p:
             self.settings.setValue("last_dir", os.path.dirname(p))
             self.explore(p)
@@ -1509,6 +1760,7 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------------- Journal
     def log(self, msg: str, level: str = "info"):
+        msg = i18n.tr(msg)
         col = T.LOG_COLORS.get(level, T.TEXT)
         ts = time.strftime("%H:%M:%S")
         safe = html.escape(msg).replace("\n", "<br>")
@@ -1534,7 +1786,7 @@ class MainWindow(QMainWindow):
         return d
 
     def _browse_open(self, edit: QLineEdit):
-        p, _ = QFileDialog.getOpenFileName(self, "Ouvrir une image", self._last_dir(), F.image_filter())
+        p, _ = QFileDialog.getOpenFileName(self, "Ouvrir une image", self._last_dir(), F.image_filter(True))
         if p:
             self.settings.setValue("last_dir", os.path.dirname(p))
             edit.setText(p)
@@ -1550,7 +1802,10 @@ class MainWindow(QMainWindow):
 
     def _auto_name(self, ext):
         base = "disquette_" + time.strftime("%Y%m%d_%H%M%S")
-        return os.path.join(self._last_dir(), base + ext)
+        d = getattr(self, "_profile_dir", None)
+        if not d or not os.path.isdir(d):
+            d = self._last_dir()
+        return os.path.join(d, base + ext)
 
     def _read_browse(self):
         pr = self.r_pick.preset()
@@ -1594,7 +1849,7 @@ class MainWindow(QMainWindow):
             info += "<br>Format(s) correspondant à la taille : " + ", ".join(
                 f"<code>{g}</code>" for g in guesses[:4])
         elif not flux:
-            info += "<br><span style='color:#e3a73b'>Choisissez le format manuellement.</span>"
+            info += "<br><span style='color:" + T.STATUS["retried"] + "'>Choisissez le format manuellement.</span>"
         self.w_info.setText(info)
 
     # ---------------------------------------------------------------- Tâches
@@ -1665,6 +1920,7 @@ class MainWindow(QMainWindow):
         tracks = self.r_tracks.text().strip() or pr.tracks
         flux_copy = os.path.splitext(path)[0] + ".scp" if (self.r_flux.isChecked() and pr.fmt
                                                          and not F.is_flux_image(path)) else None
+        self._read_flux = flux_copy
         try:
             planned, cyls = self._planned(pr.fmt, tracks, "c=0-79:h=0-1")
         except Exception as e:
@@ -1871,6 +2127,17 @@ class MainWindow(QMainWindow):
         elif k == "inserted":
             if getattr(self, "_batch_wait", False):
                 self._batch_go = True
+        elif k == "convert":
+            dst = getattr(self, "_explore_after_convert", None)
+            if dst and os.path.isfile(dst):
+                self._explore_after_convert = None
+                QTimer.singleShot(300, lambda: self.explore(dst))
+        elif k == "compare":
+            if d["same"]:
+                self.c_cmp2_lbl.setText("✔ Images identiques.")
+            else:
+                self.c_cmp2_lbl.setText(f"✖ {len(d['diff'])} différence(s) — {d['only_a']} secteur(s) lisibles "
+                                        f"seulement dans A, {d['only_b']} seulement dans B. Voir la carte.")
         elif k == "recover":
             self.c_rec_lbl.setText(f"{d['fixed']} secteur(s) récupéré(s), {d['left']} toujours illisible(s).")
         elif k == "calib":
@@ -1884,7 +2151,11 @@ class MainWindow(QMainWindow):
             if getattr(self, "_batch_active", False) and not getattr(self, "_pending", None):
                 self._batch_count += 1
                 self._batch_next = True
-            self._last_image = d["path"] if os.path.dirname(d["path"]) != EM.session_dir() else None
+            self._last_image = d["path"]
+            if not getattr(self, "_pending", None) or self._pending.get("path") != d["path"]:
+                fl = getattr(self, "_read_flux", None)
+                self._last_flux = fl if fl and os.path.isfile(fl) else (d["path"] if F.is_flux_image(d["path"]) else None)
+                self._catalog_auto(d["path"], self._last_flux or "") if os.path.dirname(d["path"]) != EM.session_dir() else None
             if d.get("findings") is not None:
                 QTimer.singleShot(0, self.show_report)
             if getattr(self, "_pending", None) and self._pending["path"] == d["path"]:
@@ -1906,6 +2177,8 @@ class MainWindow(QMainWindow):
 
     def _on_finished(self):
         self._explore_after_read = False
+        if getattr(self, "_conv_queue", None):
+            QTimer.singleShot(200, self._next_conversion)
         if getattr(self, "_batch_next", False):
             self._batch_next = False
             QTimer.singleShot(400, self._batch_continue)
@@ -1993,17 +2266,198 @@ class MainWindow(QMainWindow):
         self.r_flux.setChecked(self.settings.value("flux_copy", "false") == "true")
         self._read_fmt_changed()
         self._fill_recent()
+        self._fill_profiles()
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
 
     def dropEvent(self, e):
-        for u in e.mimeData().urls():
-            p = u.toLocalFile()
-            if os.path.isfile(p):
-                self.explore(p)
-                break
+        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        if len(paths) == 1 and os.path.isfile(paths[0]):
+            self.explore(paths[0])
+            return
+        if paths:
+            self.drop_many(paths)
+
+    # --- Aide, préférences, raccourcis
+    def show_help(self, topic: str = "Démarrage rapide"):
+        from .help import HelpDialog
+        HelpDialog(self, topic).exec()
+
+    def show_about(self):
+        QMessageBox.about(self, APP_NAME,
+                          f"<h3>{APP_NAME} {__version__}</h3>"
+                          "<p>Interface moderne pour les lecteurs de flux Greaseweazle.</p>"
+                          "<p><a href='https://github.com/Darkmind64/Floppy-Studio'>github.com/Darkmind64/"
+                          "Floppy-Studio</a></p><p>Basé sur la bibliothèque greaseweazle de Keir Fraser."
+                          " Licence MIT.</p>")
+
+    def show_prefs(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Préférences")
+        lay = QVBoxLayout(dlg)
+        f = QFormLayout()
+        lang = QComboBox()
+        lang.addItem("Français", "fr")
+        lang.addItem("English", "en")
+        lang.setCurrentIndex(max(0, lang.findData(self.settings.value("lang", "fr"))))
+        theme = QComboBox()
+        theme.addItem("Sombre", "dark")
+        theme.addItem("Clair", "light")
+        theme.setCurrentIndex(max(0, theme.findData(self.settings.value("theme", "dark"))))
+        upd = QCheckBox("Vérifier les mises à jour au démarrage")
+        upd.setChecked(self.settings.value("upd_auto", "true") == "true")
+        flux = QCheckBox("Garder aussi le flux brut (.scp)")
+        flux.setChecked(self.r_flux.isChecked())
+        cat = QCheckBox("Ajout auto. des images lues/ouvertes")
+        cat.setChecked(self.cat_auto.isChecked())
+        f.addRow("Langue", lang)
+        f.addRow("Thème", theme)
+        f.addRow(upd)
+        f.addRow(flux)
+        f.addRow(cat)
+        lay.addLayout(f)
+        bb = QHBoxLayout()
+        bb.addStretch()
+        ok = QPushButton("Enregistrer")
+        ok.setObjectName("primary")
+        ok.clicked.connect(dlg.accept)
+        cancel = QPushButton("Annuler")
+        cancel.clicked.connect(dlg.reject)
+        bb.addWidget(cancel)
+        bb.addWidget(ok)
+        lay.addLayout(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self.settings.setValue("upd_auto", "true" if upd.isChecked() else "false")
+        self.r_flux.setChecked(flux.isChecked())
+        self.settings.setValue("flux_copy", "true" if flux.isChecked() else "false")
+        self.cat_auto.setChecked(cat.isChecked())
+        changed = (lang.currentData() != self.settings.value("lang", "fr")
+                   or theme.currentData() != self.settings.value("theme", "dark"))
+        self.settings.setValue("lang", lang.currentData())
+        self.settings.setValue("theme", theme.currentData())
+        if changed and QMessageBox.question(
+                self, "Redémarrage nécessaire",
+                "La langue et le thème seront appliqués au prochain démarrage.\n\nRedémarrer maintenant ?") \
+                == QMessageBox.Yes:
+            self.restart()
+
+    def restart(self):
+        import sys
+        from PySide6.QtCore import QProcess
+        if self.job and self.job.isRunning():
+            return
+        args = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv
+        exe = sys.executable
+        self.close()
+        QProcess.startDetached(exe, [a for a in args if not os.path.isfile(a) or a.endswith(".py")])
+        QApplication.instance().quit()
+
+    def _install_shortcuts(self):
+        from PySide6.QtGui import QKeySequence, QShortcut
+
+        def sc(key, fn):
+            s = QShortcut(QKeySequence(key), self)
+            s.activated.connect(fn)
+        sc("F1", lambda: self.show_help())
+        sc("Ctrl+O", self._explore_browse)
+        sc("Ctrl+R", lambda: (self.nav.setCurrentRow(0), self.start_read()) if self.dev.connected
+           and not (self.job and self.job.isRunning()) else None)
+        sc("Ctrl+Shift+W", lambda: (self.nav.setCurrentRow(1), self.start_write()) if self.dev.connected
+           and not (self.job and self.job.isRunning()) else None)
+        sc("Escape", self.cancel_job)
+        sc("F5", lambda: self.refresh_ports(False))
+        sc("Ctrl+,", self.show_prefs)
+        sc("Ctrl+Q", self.close)
+        sc("Ctrl+F", self._shortcut_search)
+        sc("Ctrl+E", lambda: self.explorer.export_selected() if self.right.currentIndex() == 1 else None)
+        for i in range(min(self.nav.count(), 10)):
+            sc(f"Ctrl+{(i + 1) % 10}", lambda i=i: self.nav.setCurrentRow(i))
+
+    def _shortcut_search(self):
+        if self.right.currentIndex() == 2:
+            self.catalog.q.setFocus()
+            self.catalog.q.selectAll()
+        elif self.right.currentIndex() == 1:
+            self.explorer.search()
+        else:
+            self.nav.setCurrentRow(CATALOG_ROW)
+            self.catalog.q.setFocus()
+
+    # --- Dépôt de plusieurs fichiers / dossiers
+    def drop_many(self, paths):
+        from .catalog import IMAGE_EXT
+        imgs = []
+        for p in paths:
+            if os.path.isdir(p):
+                for root, _, names in os.walk(p):
+                    imgs += [os.path.join(root, n) for n in names if os.path.splitext(n)[1].lower() in IMAGE_EXT]
+            elif os.path.splitext(p)[1].lower() in IMAGE_EXT:
+                imgs.append(p)
+        if not imgs:
+            QMessageBox.information(self, APP_NAME, "Aucune image disquette reconnue dans le dépôt.")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Plusieurs images")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel(f"<b>{len(imgs)} image(s)</b> déposée(s). Que faire ?"))
+        choice = {"v": None}
+        for key, txt in (("cat", "📚  Ajouter au catalogue"), ("conv", "🔁  Convertir toutes vers un format…"),
+                         ("explore", "📂  Ouvrir la première dans l'explorateur")):
+            b = QPushButton(txt)
+            b.clicked.connect(lambda _=False, k=key: (choice.__setitem__("v", k), dlg.accept()))
+            lay.addWidget(b)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        if choice["v"] == "cat":
+            self.nav.setCurrentRow(CATALOG_ROW)
+            self.catalog.add_paths(imgs)
+        elif choice["v"] == "explore":
+            self.explore(imgs[0])
+        elif choice["v"] == "conv":
+            self.batch_convert(imgs)
+
+    def batch_convert(self, imgs):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Conversion par lot")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(_muted("Format de sortie (l'extension du préréglage est utilisée) :"))
+        pick = FormatPicker()
+        lay.addWidget(pick)
+        dest = QLineEdit(os.path.dirname(imgs[0]))
+        bb = QPushButton("…")
+        bb.setFixedWidth(40)
+        bb.clicked.connect(lambda: dest.setText(QFileDialog.getExistingDirectory(dlg, "Destination", dest.text())
+                                                or dest.text()))
+        lay.addWidget(_row(QLabel("Dossier"), dest, bb))
+        go = QPushButton("🔁  Convertir")
+        go.setObjectName("primary")
+        go.clicked.connect(dlg.accept)
+        lay.addWidget(go)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        pr = pick.preset()
+        if pr is None:
+            return
+        os.makedirs(dest.text(), exist_ok=True)
+        self._conv_queue = []
+        for p in imgs:
+            out = os.path.join(dest.text(), os.path.splitext(os.path.basename(p))[0] + pr.ext)
+            if os.path.abspath(out) == os.path.abspath(p):
+                continue
+            self._conv_queue.append((p, out, pr.fmt))
+        self.log(f"Conversion par lot : {len(self._conv_queue)} image(s)", "info")
+        self._next_conversion()
+
+    def _next_conversion(self):
+        q = getattr(self, "_conv_queue", [])
+        if not q:
+            return
+        src, dst, fmt = q.pop(0)
+        self.run_job(E.ConvertJob(self.dev, src, dst, fmt), f"Conversion {os.path.basename(src)} "
+                                                           f"({len(q)} restante(s))")
 
     def closeEvent(self, e):
         if self.job and self.job.isRunning():
