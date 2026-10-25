@@ -27,8 +27,8 @@ FR = {
 <li>Branchez le Greaseweazle en USB : Windows l'installe comme port série (aucun pilote à ajouter).</li>
 <li>Le port est détecté et connecté automatiquement ; sinon choisissez-le en haut et cliquez <b>Connecter</b>.</li>
 <li>Choisissez le lecteur : <b>A</b> pour un lecteur PC branché après la torsade du câble.</li>
-<li>Insérez une disquette, page <b>Analyser</b> : le format le plus probable est proposé.</li>
-<li>Page <b>Lire</b> : le format est prérempli, cliquez <b>Lire la disquette</b>. La carte montre chaque
+<li>Insérez une disquette, choisissez le <b>Format actif</b> dans la barre du haut (ou cliquez <b>🔍 Détecter</b>) : il s'applique à toutes les pages.</li>
+<li>Page <b>Lire</b> : cliquez <b>Lire la disquette</b>. La carte montre chaque
 piste en direct (vert : OK, orange : relue, rouge : illisible).</li>
 <li>Cliquez <b>Explorer l'image lue</b> pour parcourir les fichiers.</li>
 </ol>
@@ -134,8 +134,8 @@ EN = {
 <li>Plug the Greaseweazle into USB: Windows installs it as a serial port (no driver needed).</li>
 <li>The port is detected and connected automatically; otherwise pick it at the top and click <b>Connect</b>.</li>
 <li>Choose the drive: <b>A</b> for a PC drive connected after the cable twist.</li>
-<li>Insert a disk, <b>Analyse</b> page: the most likely format is proposed.</li>
-<li><b>Read</b> page: the format is pre-filled, click <b>Read disk</b>. The map shows each track live
+<li>Insert a disk and pick the <b>Active format</b> in the top bar (or click <b>🔍 Detect</b>): it applies to every page.</li>
+<li><b>Read</b> page: click <b>Read disk</b>. The map shows each track live
 (green: OK, orange: re-read, red: unreadable).</li>
 <li>Click <b>Explore read image</b> to browse the files.</li>
 </ol>

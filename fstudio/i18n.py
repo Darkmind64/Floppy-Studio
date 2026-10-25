@@ -832,6 +832,32 @@ Impossible de lancer l'installateur : 	Cannot start the installer:
 Pas de notes de version.	No release notes.
 Version 	Version
 Sommaire	Contents
+Format actif	Active format
+🔍  Détecter	🔍  Detect
+Analyse la disquette insérée et choisit le format le plus probable	Analyses the inserted disk and picks the most likely format
+Modifiable dans la barre « Format actif » en haut.	Can be changed in the "Active format" bar at the top.
+Format de lecture	Read format
+Format d'écriture	Write format
+Géométrie	Geometry
+Sinon	Otherwise
+Disquette	Disk
+Matériel	Hardware
+Images flux : le format actif est alors ignoré	Flux images: the active format is then ignored
+Décochez pour décoder les flux avec le format actif	Uncheck to decode flux with the active format
+Connectez d'abord le Greaseweazle (bouton « Connecter » en haut).	Connect the Greaseweazle first ("Connect" button at the top).
+Masquer	Hide
+ — lecture parfaite	 — perfect read
+📂  Explorer	📂  Explore
+📁  Dossier	📁  Folder
+📋  Rapport	📋  Report
+♻  Récupérer	♻  Recover
+📤  Écrire une copie	📤  Write a copy
+Écriture terminée (	Write finished (
+ piste(s) vérifiée(s))	 track(s) verified)
+📥  Relire	📥  Read again
+Conversion terminée : 	Conversion finished: 
+ · image 	 · image 
+ · pistes 	 · tracks 
  Ko	 KB
  Mo	 MB
 1 face	1 side
@@ -840,6 +866,7 @@ Sommaire	Contents
  face	 side
  cyl × 	 cyl × 
 secteurs/piste	sectors/track
+ secteurs/piste	 sectors/track
 Pistes : 	Tracks: 
 DD 1 face	DD 1 side
 Fichier(s)	File(s)

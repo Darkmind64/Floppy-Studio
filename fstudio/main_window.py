@@ -6,7 +6,7 @@ import os
 import time
 from typing import Optional
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QTextCursor
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QDialog,
                                QComboBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
@@ -125,6 +125,104 @@ class FormatPicker(QWidget):
         return False
 
 
+class FormatBar(QFrame):
+    """Format actif, commun à toutes les pages (lecture, écriture, copie, formatage, conversion…)."""
+    format_changed = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("formatbar")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(16, 6, 16, 6)
+        lay.setSpacing(8)
+        t = QLabel("Format actif")
+        t.setObjectName("h2")
+        self.plat = QComboBox()
+        self.fmt = QComboBox()
+        self.plat.setMinimumWidth(170)
+        self.fmt.setMinimumWidth(260)
+        self.geo = QLabel("")
+        self.geo.setObjectName("muted")
+        self.geo.setTextFormat(Qt.RichText)
+        for p in F.platforms():
+            self.plat.addItem(p.name)
+        lay.addWidget(t)
+        lay.addWidget(self.plat)
+        lay.addWidget(self.fmt)
+        lay.addWidget(self.geo, 1)
+        self.extra = lay
+        self.plat.currentIndexChanged.connect(self._fill)
+        self.fmt.currentIndexChanged.connect(self._geo)
+        self._fill()
+
+    def _fill(self):
+        self.fmt.blockSignals(True)
+        self.fmt.clear()
+        p = F.platforms()[self.plat.currentIndex()]
+        for pr in p.presets:
+            self.fmt.addItem(pr.label, pr)
+            if pr.fmt:
+                self.fmt.setItemData(self.fmt.count() - 1, pr.fmt + ("\n" + pr.note if pr.note else ""),
+                                     Qt.ToolTipRole)
+        self.fmt.blockSignals(False)
+        self._geo()
+
+    def _geo(self):
+        pr = self.preset()
+        if pr is None:
+            self.geo.setText("")
+            return
+        if pr.fmt is None:
+            txt = "Flux magnétique brut : aucune interprétation, archivage fidèle."
+        else:
+            g = F.geometry(pr.fmt)
+            txt = f"<code>{pr.fmt}</code> · " + (g.desc if g else "") + f" · image <code>{pr.ext}</code>"
+        if pr.tracks:
+            txt += f" · pistes <code>{pr.tracks}</code>"
+        self.geo.setText(txt)
+        self.geo.setToolTip(pr.note or "")
+        self.format_changed.emit(pr)
+
+    def preset(self) -> Optional[F.Preset]:
+        return self.fmt.currentData()
+
+    def describe(self) -> str:
+        pr = self.preset()
+        if pr is None:
+            return "—"
+        return f"{self.plat.currentText()} — {pr.label}"
+
+    def select_format(self, fmt: Optional[str]) -> bool:
+        cur = self.preset()
+        if cur is not None and cur.fmt == fmt and fmt is not None:
+            return True
+        for i, p in enumerate(F.platforms()):
+            for j, pr in enumerate(p.presets):
+                if pr.fmt == fmt:
+                    self.plat.setCurrentIndex(i)
+                    self.fmt.setCurrentIndex(j)
+                    return True
+        return False
+
+
+class FormatNote(QLabel):
+    """Rappel du format actif dans une page."""
+
+    def __init__(self, bar: FormatBar, prefix: str = "Format utilisé"):
+        super().__init__()
+        self.bar, self.prefix = bar, prefix
+        self.setWordWrap(True)
+        self.setTextFormat(Qt.RichText)
+        self.setObjectName("fmtnote")
+        bar.format_changed.connect(lambda _p: self._upd())
+        self._upd()
+
+    def _upd(self):
+        self.setText(f"{i18n.tr(self.prefix)} : <b>{html.escape(self.bar.describe())}</b><br>"
+                     f"<span style='color:{T.MUTED}'>{i18n.tr('Modifiable dans la barre « Format actif » en haut.')}"
+                     "</span>")
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -143,6 +241,14 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         outer.addWidget(self._build_topbar())
+        self.fmt_bar = FormatBar()
+        b = QPushButton("🔍  Détecter")
+        b.setToolTip("Analyse la disquette insérée et choisit le format le plus probable")
+        b.clicked.connect(self.start_analyse)
+        self.fmt_bar.extra.addWidget(b)
+        self.fmt_bar.format_changed.connect(self._on_format_changed)
+        outer.addWidget(self.fmt_bar)
+        self.r_pick = self.w_pick = self.f_pick = self.cp_pick = self.x_pick = self.c_pick = self.fmt_bar
 
         body = QSplitter(Qt.Horizontal)
         body.setHandleWidth(1)
@@ -257,10 +363,24 @@ class MainWindow(QMainWindow):
         self.nav.setObjectName("nav")
         self.nav.setFixedWidth(132)
         self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        for icon, name in [("📥", "Lire"), ("📤", "Écrire"), ("🧹", "Formater"), ("🔍", "Analyser"),
-                           ("📂", "Explorer"), ("📚", "Catalogue"), ("📑", "Copier"), ("🛠", "Outils"),
-                           ("🔁", "Convertir"), ("ℹ", "Appareil")]:
-            self.nav.addItem(QListWidgetItem(f"{icon}  {i18n.tr(name)}"))
+        entries = [("DISQUETTE",), ("📥", "Lire", 0), ("📤", "Écrire", 1), ("📑", "Copier", 6),
+                   ("🧹", "Formater", 2), ("🔍", "Analyser", 3),
+                   ("FICHIERS",), ("📂", "Explorer", 4), ("📚", "Catalogue", 5), ("🔁", "Convertir", 8),
+                   ("MATÉRIEL",), ("🛠", "Outils", 7), ("ℹ", "Appareil", 9)]
+        for e in entries:
+            if len(e) == 1:
+                it = QListWidgetItem(i18n.tr(e[0].capitalize()).upper())
+                it.setFlags(Qt.NoItemFlags)
+                f = it.font()
+                f.setPointSizeF(7.5)
+                f.setBold(True)
+                it.setFont(f)
+                it.setForeground(QColor(T.MUTED))
+                it.setData(Qt.UserRole, -1)
+            else:
+                it = QListWidgetItem(f"{e[0]}  {i18n.tr(e[1])}")
+                it.setData(Qt.UserRole, e[2])
+            self.nav.addItem(it)
         l.addWidget(self.nav)
 
         self.pages = QStackedWidget()
@@ -277,9 +397,8 @@ class MainWindow(QMainWindow):
             self.pages.addWidget(sc)
         l.addWidget(self.pages, 1)
         self._fit_pages()
-        self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.nav.currentRowChanged.connect(self._nav_changed)
-        self.nav.setCurrentRow(0)
+        self.goto_page(0)
         return side
 
     def _fit_pages(self):
@@ -327,15 +446,7 @@ class MainWindow(QMainWindow):
         gl.addWidget(bs)
         gl.addWidget(bd)
         v.addWidget(g)
-        g = QGroupBox("Format")
-        gl = QVBoxLayout(g)
-        self.r_pick = FormatPicker()
-        self.r_pick.changed = self._read_fmt_changed
-        gl.addWidget(self.r_pick)
-        b = QPushButton("🔍  Détecter automatiquement")
-        b.clicked.connect(self.start_analyse)
-        gl.addWidget(b)
-        v.addWidget(g)
+        v.addWidget(FormatNote(self.fmt_bar, "Format de lecture"))
 
         g = QGroupBox("Fichier de sortie")
         gl = QVBoxLayout(g)
@@ -545,11 +656,10 @@ class MainWindow(QMainWindow):
 
         g = QGroupBox("Format")
         gl = QVBoxLayout(g)
-        self.w_pick = FormatPicker()
-        gl.addWidget(self.w_pick)
+        gl.addWidget(FormatNote(self.fmt_bar, "Format d'écriture"))
         self.w_rawfmt = QCheckBox("Écrire le flux tel quel (SCP, HFE…)")
         self.w_rawfmt.setChecked(True)
-        self.w_rawfmt.toggled.connect(lambda on: self.w_pick.setEnabled(not on))
+        self.w_rawfmt.setToolTip("Images flux : le format actif est alors ignoré")
         gl.addWidget(self.w_rawfmt)
         v.addWidget(g)
 
@@ -606,8 +716,7 @@ class MainWindow(QMainWindow):
 
         self.f_low = QGroupBox("Format bas niveau")
         fl = QVBoxLayout(self.f_low)
-        self.f_pick = FormatPicker()
-        fl.addWidget(self.f_pick)
+        fl.addWidget(FormatNote(self.fmt_bar, "Géométrie"))
         self.f_fill = QSpinBox()
         self.f_fill.setRange(0, 255)
         self.f_fill.setDisplayIntegerBase(16)
@@ -662,6 +771,12 @@ class MainWindow(QMainWindow):
 
     def _fmt_spec_changed(self):
         sp = self._fmt_spec()
+        if sp is not None and not getattr(self, "_fmt_sync", False) and hasattr(self, "fmt_bar"):
+            self._fmt_sync = True
+            try:
+                self.fmt_bar.select_format(sp.fmt)
+            finally:
+                self._fmt_sync = False
         if sp is None:
             self.f_label.setEnabled(False)
             self.f_info.setText("")
@@ -751,7 +866,7 @@ class MainWindow(QMainWindow):
                 f"(format {html.escape(fmt)}) ?<br>Le contenu actuel sera remplacé.",
                 QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
-        self.nav.setCurrentRow(1)
+        self.goto_page(1)
         self.right.setCurrentIndex(0)
         self._write_file(path, fmt, True, False, f"Écriture ← {os.path.basename(path)}"
                          + (f" ({tracks})" if tracks else ""), tracks=tracks or None)
@@ -759,12 +874,7 @@ class MainWindow(QMainWindow):
     # --- Copier / comparer / tester
     def _page_copy(self):
         w, v = self._page("Copier et vérifier", "Duplication, comparaison, test de surface.")
-        g = QGroupBox("Format de la disquette")
-        gl = QVBoxLayout(g)
-        self.cp_pick = FormatPicker()
-        self.cp_pick.select_format("ibm.1440")
-        gl.addWidget(self.cp_pick)
-        v.addWidget(g)
+        v.addWidget(FormatNote(self.fmt_bar, "Format de la disquette"))
 
         g = QGroupBox("Copie de disquette")
         gl = QVBoxLayout(g)
@@ -1269,10 +1379,8 @@ class MainWindow(QMainWindow):
         self.x_auto = QCheckBox("Détection automatique du codage")
         self.x_auto.setChecked(True)
         gl.addWidget(self.x_auto)
-        self.x_pick = FormatPicker()
-        self.x_pick.setEnabled(False)
-        self.x_auto.toggled.connect(lambda on: self.x_pick.setEnabled(not on))
-        gl.addWidget(self.x_pick)
+        self.x_auto.setToolTip("Décochez pour décoder les flux avec le format actif")
+        gl.addWidget(FormatNote(self.fmt_bar, "Sinon"))
         v.addWidget(g)
 
         g = QGroupBox("Images récentes")
@@ -1292,9 +1400,25 @@ class MainWindow(QMainWindow):
         v.addStretch()
         return w
 
+    def goto_page(self, page: int):
+        for r in range(self.nav.count()):
+            if self.nav.item(r).data(Qt.UserRole) == page:
+                self.nav.setCurrentRow(r)
+                return
+
+    def current_page(self) -> int:
+        it = self.nav.currentItem()
+        return it.data(Qt.UserRole) if it else 0
+
     def _nav_changed(self, row):
+        it = self.nav.item(row)
+        page = it.data(Qt.UserRole) if it else -1
+        if page is None or page < 0:
+            return
+        self.pages.setCurrentIndex(page)
+        self.settings.setValue("last_page", page)
         if hasattr(self, "right"):
-            self.right.setCurrentIndex(1 if row == EXPLORER_ROW else 2 if row == CATALOG_ROW else 0)
+            self.right.setCurrentIndex(1 if page == EXPLORER_ROW else 2 if page == CATALOG_ROW else 0)
 
     def _recent_list(self):
         r = self.settings.value("recent_images") or []
@@ -1325,7 +1449,7 @@ class MainWindow(QMainWindow):
         if not self.x_auto.isChecked():
             pr = self.x_pick.preset()
             fmt = pr.fmt if pr else None
-        self.nav.setCurrentRow(EXPLORER_ROW)
+        self.goto_page(EXPLORER_ROW)
         self.explorer.open_path(path, fmt)
 
     def _explore_last(self):
@@ -1340,7 +1464,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_NAME, "Connectez d'abord le Greaseweazle.")
             return
         self._explore_after_read = True
-        self.nav.setCurrentRow(0)
+        self.goto_page(0)
         self.start_read()
 
     # --- Outils
@@ -1441,8 +1565,7 @@ class MainWindow(QMainWindow):
         v.addWidget(g)
         g = QGroupBox("Format de décodage")
         gl = QVBoxLayout(g)
-        self.c_pick = FormatPicker()
-        gl.addWidget(self.c_pick)
+        gl.addWidget(FormatNote(self.fmt_bar, "Format de décodage"))
         gl.addWidget(_muted("Requis pour passer d'un flux (SCP, HFE…) à une image secteurs (IMG, ADF…)."))
         v.addWidget(g)
         b = QPushButton("🔁  Convertir l'image")
@@ -1590,6 +1713,24 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(ws)
         v.setContentsMargins(14, 14, 14, 10)
         v.setSpacing(10)
+
+        # Bandeau « et ensuite ? »
+        self.banner = QFrame()
+        self.banner.setObjectName("banner")
+        bl = QHBoxLayout(self.banner)
+        bl.setContentsMargins(14, 8, 8, 8)
+        self.banner_lbl = QLabel("")
+        self.banner_lbl.setTextFormat(Qt.RichText)
+        bl.addWidget(self.banner_lbl, 1)
+        self.banner_btns = QHBoxLayout()
+        bl.addLayout(self.banner_btns)
+        bx = QPushButton("✕")
+        bx.setFixedWidth(34)
+        bx.setToolTip("Masquer")
+        bx.clicked.connect(self.banner.hide)
+        bl.addWidget(bx)
+        self.banner.hide()
+        v.addWidget(self.banner)
 
         # Statistiques
         stats = QFrame()
@@ -1756,6 +1897,12 @@ class MainWindow(QMainWindow):
         for b in (self.r_go, self.w_go, self.a_go, self.f_go, self.c_go, self.c_cmp, self.c_surf,
                   self.c_rec_go, self.a_full):
             b.setEnabled(ok)
+            if not self.dev.connected:
+                b.setToolTip(i18n.tr("Connectez d'abord le Greaseweazle (bouton « Connecter » en haut)."))
+            elif busy:
+                b.setToolTip(i18n.tr("Une opération est déjà en cours."))
+            else:
+                b.setToolTip("")
         self.btn_cancel.setVisible(busy)
 
     # ---------------------------------------------------------------- Journal
@@ -1813,6 +1960,27 @@ class MainWindow(QMainWindow):
         if self._browse_save(self.r_path, "disquette" + ext):
             self.r_auto.setChecked(False)
 
+    def _on_format_changed(self, pr):
+        if hasattr(self, "r_path"):
+            self._read_fmt_changed()
+        if hasattr(self, "f_spec") and pr is not None and pr.fmt and not getattr(self, "_fmt_sync", False):
+            self._fmt_sync = True
+            try:
+                cur = self._fmt_spec()
+                if cur is None or cur.fmt != pr.fmt:
+                    for gi in range(self.f_group.count() - 1):
+                        self.f_group.setCurrentIndex(gi)
+                        k = next((i for i in range(self.f_spec.count()) if self.f_spec.itemData(i).fmt == pr.fmt), -1)
+                        if k >= 0:
+                            self.f_spec.setCurrentIndex(k)
+                            break
+                    else:
+                        self.f_group.setCurrentIndex(self.f_group.count() - 1)
+            finally:
+                self._fmt_sync = False
+        if pr is not None and pr.fmt is not None:
+            self.settings.setValue("read_fmt", pr.fmt)
+
     def _read_fmt_changed(self):
         pr = self.r_pick.preset()
         if not pr:
@@ -1856,10 +2024,31 @@ class MainWindow(QMainWindow):
     def _drive(self):
         return self.drive_cb.currentData()
 
+    def show_banner(self, text: str, actions=(), level: str = "ok"):
+        while self.banner_btns.count():
+            it = self.banner_btns.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        col = T.STATUS.get({"ok": "ok", "warn": "retried", "err": "bad"}.get(level, "ok"))
+        self.banner_lbl.setText(f"<span style='color:{col}'>●</span>&nbsp; {i18n.tr(text)}")
+        for i, (label, fn) in enumerate(actions):
+            b = QPushButton(label)
+            if i == 0:
+                b.setObjectName("primary")
+            b.clicked.connect(fn)
+            self.banner_btns.addWidget(b)
+        self.banner.show()
+
+    def _open_folder(self, path: str):
+        d = path if os.path.isdir(path) else os.path.dirname(path)
+        if hasattr(os, "startfile") and os.path.isdir(d):
+            os.startfile(d)
+
     def run_job(self, job: E.Job, ws_title: Optional[str] = None):
         if self.job and self.job.isRunning():
             QMessageBox.information(self, APP_NAME, "Une opération est déjà en cours.")
             return
+        self.banner.hide()
         self.job = job
         job.log.connect(self.log)
         job.track_started.connect(self.map.set_current)
@@ -1968,7 +2157,7 @@ class MainWindow(QMainWindow):
         if not self.dev.connected:
             QMessageBox.information(self, APP_NAME, "Connectez d'abord le Greaseweazle.")
             return
-        self.nav.setCurrentRow(ANALYSE_ROW)
+        self.goto_page(ANALYSE_ROW)
         self._reset_stats(80, [0, 1], 0, {(0, 0), (1, 1), (40, 0)})
         self.a_table.setRowCount(0)
         self.run_job(E.AnalyseJob(self.dev, self._drive()), "Analyse")
@@ -1982,7 +2171,7 @@ class MainWindow(QMainWindow):
             return
         fmt = it.data(Qt.UserRole)
         self.r_pick.select_format(fmt)
-        self.nav.setCurrentRow(0)
+        self.goto_page(0)
 
     def start_calibrate(self):
         try:
@@ -2132,6 +2321,11 @@ class MainWindow(QMainWindow):
             if dst and os.path.isfile(dst):
                 self._explore_after_convert = None
                 QTimer.singleShot(300, lambda: self.explore(dst))
+            elif not getattr(self, "_conv_queue", None) and getattr(self.job, "dst", None):
+                out = self.job.dst
+                self.show_banner(f"Conversion terminée : <b>{html.escape(os.path.basename(out))}</b>",
+                                 [("📂  Explorer", lambda: self.explore(out)),
+                                  ("📁  Dossier", lambda: self._open_folder(out))])
         elif k == "compare":
             if d["same"]:
                 self.c_cmp2_lbl.setText("✔ Images identiques.")
@@ -2171,9 +2365,25 @@ class MainWindow(QMainWindow):
             if getattr(self, "_explore_after_read", False):
                 self._explore_after_read = False
                 self.explore(d["path"])
+            elif os.path.dirname(d["path"]) != EM.session_dir() and not getattr(self, "_batch_active", False):
+                p = d["path"]
+                msg = (f"Image enregistrée : <b>{html.escape(os.path.basename(p))}</b>"
+                       + (f" — <span style='color:{T.STATUS['bad']}'>{d['bad']} secteur(s) illisible(s)</span>"
+                          if d["bad"] else " — lecture parfaite"))
+                acts = [("📂  Explorer", lambda: self.explore(p)), ("📁  Dossier", lambda: self._open_folder(p)),
+                        ("📋  Rapport", self.show_report)]
+                if d["bad"] and not F.is_flux_image(p):
+                    acts.append(("♻  Récupérer", lambda: (self.c_rec.setText(p), self.goto_page(6))))
+                acts.append(("📤  Écrire une copie", lambda: (self.w_path.setText(p), self._write_path_changed(),
+                                                              self.goto_page(1))))
+                self.show_banner(msg, acts, "warn" if d["bad"] else "ok")
         elif k == "write" and d["failed"]:
             QMessageBox.warning(self, APP_NAME, f"{d['failed']} piste(s) n'ont pas pu être vérifiées.\n"
                                 "Disquette probablement abîmée.")
+        elif k == "write":
+            self.show_banner(f"Écriture terminée ({d['verified']} piste(s) vérifiée(s))",
+                             [("🔍  Analyser la disquette", self.start_analyse),
+                              ("📥  Relire", lambda: self.goto_page(0))])
 
     def _on_finished(self):
         self._explore_after_read = False
@@ -2258,6 +2468,10 @@ class MainWindow(QMainWindow):
         fmt = self.settings.value("read_fmt") or "ibm.1440"
         if fmt:
             self.r_pick.select_format(fmt)
+        try:
+            self.goto_page(int(self.settings.value("last_page", 0) or 0))
+        except (TypeError, ValueError):
+            pass
         drv = self.settings.value("drive")
         if drv:
             i = self.drive_cb.findData(drv)
@@ -2363,9 +2577,9 @@ class MainWindow(QMainWindow):
             s.activated.connect(fn)
         sc("F1", lambda: self.show_help())
         sc("Ctrl+O", self._explore_browse)
-        sc("Ctrl+R", lambda: (self.nav.setCurrentRow(0), self.start_read()) if self.dev.connected
+        sc("Ctrl+R", lambda: (self.goto_page(0), self.start_read()) if self.dev.connected
            and not (self.job and self.job.isRunning()) else None)
-        sc("Ctrl+Shift+W", lambda: (self.nav.setCurrentRow(1), self.start_write()) if self.dev.connected
+        sc("Ctrl+Shift+W", lambda: (self.goto_page(1), self.start_write()) if self.dev.connected
            and not (self.job and self.job.isRunning()) else None)
         sc("Escape", self.cancel_job)
         sc("F5", lambda: self.refresh_ports(False))
@@ -2373,8 +2587,8 @@ class MainWindow(QMainWindow):
         sc("Ctrl+Q", self.close)
         sc("Ctrl+F", self._shortcut_search)
         sc("Ctrl+E", lambda: self.explorer.export_selected() if self.right.currentIndex() == 1 else None)
-        for i in range(min(self.nav.count(), 10)):
-            sc(f"Ctrl+{(i + 1) % 10}", lambda i=i: self.nav.setCurrentRow(i))
+        for i in range(10):
+            sc(f"Ctrl+{(i + 1) % 10}", lambda i=i: self.goto_page([0, 1, 6, 2, 3, 4, 5, 8, 7, 9][i]))
 
     def _shortcut_search(self):
         if self.right.currentIndex() == 2:
@@ -2383,7 +2597,7 @@ class MainWindow(QMainWindow):
         elif self.right.currentIndex() == 1:
             self.explorer.search()
         else:
-            self.nav.setCurrentRow(CATALOG_ROW)
+            self.goto_page(CATALOG_ROW)
             self.catalog.q.setFocus()
 
     # --- Dépôt de plusieurs fichiers / dossiers
@@ -2412,7 +2626,7 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.Accepted:
             return
         if choice["v"] == "cat":
-            self.nav.setCurrentRow(CATALOG_ROW)
+            self.goto_page(CATALOG_ROW)
             self.catalog.add_paths(imgs)
         elif choice["v"] == "explore":
             self.explore(imgs[0])
@@ -2425,6 +2639,9 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(dlg)
         lay.addWidget(_muted("Format de sortie (l'extension du préréglage est utilisée) :"))
         pick = FormatPicker()
+        cur = self.fmt_bar.preset()
+        if cur is not None:
+            pick.select_format(cur.fmt)
         lay.addWidget(pick)
         dest = QLineEdit(os.path.dirname(imgs[0]))
         bb = QPushButton("…")

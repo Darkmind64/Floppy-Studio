@@ -140,6 +140,11 @@ QMenu::item {{ padding: 6px 18px; border-radius: 4px; }}
 QMenu::item:selected {{ background: {SEL}; }}
 QToolTip {{ background: {CARD}; border: 1px solid {BORDER}; color: {TEXT}; padding: 6px; }}
 QStatusBar {{ background: {PANEL}; border-top: 1px solid {BORDER}; color: {MUTED}; }}
+QFrame#formatbar {{ background: {PANEL}; border-bottom: 1px solid {BORDER}; }}
+QFrame#formatbar QComboBox {{ font-weight: 600; }}
+QLabel#fmtnote {{ background: {CARD}; border: 1px solid {BORDER}; border-left: 3px solid {ACCENT};
+    border-radius: 6px; padding: 7px 10px; }}
+QFrame#banner {{ background: {CARD}; border: 1px solid {ACCENT}; border-radius: 10px; }}
 """.format(**t)
 
 

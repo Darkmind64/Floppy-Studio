@@ -18,6 +18,10 @@ automatiquement. Les mêmes fonctions d'exploration et de conversion marchent sa
 
 ## Fonctions
 
+- **Format actif unique** : choisi une seule fois dans la barre du haut (ou détecté automatiquement), il
+  s'applique à toutes les pages (lecture, écriture, copie, formatage, explorateur, conversion).
+- **Actions suivantes** proposées après chaque lecture, écriture ou conversion (explorer, ouvrir le dossier,
+  récupérer les secteurs illisibles, écrire une copie…).
 - **Lire** une disquette vers une image (IMG, ADF, ST, FD, D64, IMD, EDSK, HFE, SCP…) avec relectures,
   repositionnement de tête et copie flux brut optionnelle (.scp) à côté de l'image.
 - **Écrire** une image sur disquette avec vérification piste par piste ; format deviné d'après l'extension
