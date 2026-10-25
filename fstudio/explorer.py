@@ -1726,7 +1726,10 @@ class ExplorerView(QWidget):
         if not fmt:
             QMessageBox.warning(self, "Écriture", "Format d'écriture inconnu pour cette image.")
             return
-        ext = ".fd" if fmt.startswith("thomson") else ".img"
+        ext = ".fd" if fmt.startswith("thomson") else ".d81" if fmt == "commodore.1581" else ".img"
+        from .fs.disk import _sides_swapped
+        if _sides_swapped(F.get_diskdef(fmt)):
+            h ^= 1          # la piste physique est sur l'autre tête
         if self.fs and self.fs.writable and not getattr(self, "_disk_dirty", False):
             ext = {"thomson": ".fd", "amiga": ".adf", "c64": self.fs.save_ext}.get(self.fs.platform, ext)
         path = os.path.join(EM.session_dir(), f"piste_{int(time.time())}{ext}")

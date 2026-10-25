@@ -613,7 +613,7 @@ Connectez d'abord le Greaseweazle.	Connect the Greaseweazle first.
 Confirmer l'écriture	Confirm writing
 Lit la disquette source, puis demande d'insérer la disquette de destination. Choisissez « Flux brut » pour copier les disquettes protégées.	Reads the source disk, then asks for the destination disk. Choose "Raw flux" to copy protected disks.
 Lit toute la disquette sans rien enregistrer et affiche les secteurs faibles ou illisibles sur la carte.	Reads the whole disk without saving anything and shows weak or unreadable sectors on the map.
-Relit uniquement les secteurs manquants d'une image (format ci-dessus), en plusieurs passes avec repositionnement de la tête, et complète l'image. Ou fusionne plusieurs lectures du même disque (lecteurs différents…).	Re-reads only the missing sectors of an image (format above), in several passes with head re-seeking, and completes the image. Or merges several reads of the same disk (different drives…).
+Relit uniquement les secteurs manquants d'une image (format actif), en plusieurs passes avec repositionnement de la tête, et complète l'image. Ou fusionne plusieurs lectures du même disque (lecteurs différents…).	Re-reads only the missing sectors of an image (active format), in several passes with head re-seeking, and completes the image. Or merges several reads of the same disk (different drives…).
 Choisissez les deux images.	Choose both images.
 Comparaison 	Comparing
 Choisissez les deux images (brutes) et leur format exact dans « Format de la disquette ».	Choose both (raw) images and their exact format in "Disk format".
@@ -832,6 +832,15 @@ Impossible de lancer l'installateur : 	Cannot start the installer:
 Pas de notes de version.	No release notes.
 Version 	Version
 Sommaire	Contents
+AMSDOS Data (40 pistes, 9 × 512, ID C1)	AMSDOS Data (40 tracks, 9 × 512, ID C1)
+AMSDOS Système / Vendor (40 pistes, ID 41)	AMSDOS System / Vendor (40 tracks, ID 41)
+Format CPC le plus courant (178 Ko).	Most common CPC format (178 KB).
+Disquettes système CP/M (169 Ko utiles).	CP/M system disks (169 KB usable).
+Écriture abandonnée : les 	Write aborted: the first 
+ premières pistes échouent à la vérification.	 tracks fail verification.
+Format double densité (DD) : si la disquette est HD (trou à droite), masquez ce trou avec un adhésif opaque ou utilisez une disquette DD.	Double density (DD) format: if the disk is HD (hole on the right), cover that hole with opaque tape or use a DD disk.
+Format haute densité (HD) : la disquette doit être une HD (trou à droite).	High density (HD) format: the disk must be HD (hole on the right).
+Vérifiez aussi que la disquette n'est pas protégée en écriture.	Also check that the disk is not write-protected.
 Format actif	Active format
 🔍  Détecter	🔍  Detect
 Analyse la disquette insérée et choisit le format le plus probable	Analyses the inserted disk and picks the most likely format
@@ -946,6 +955,9 @@ def tr(s):
         r = s
         if _FR_HINT.search(s) or any(fr in s for fr, _ in _FRAGS if len(fr) >= 7):
             r = _RX.sub(lambda m: _FMAP[m.group(0)], s)
+    if r != s or _FR_HINT.search(s):
+        # typographie anglaise : pas d'espace avant « : » et « ; »
+        r = r.replace(" : ", ": ").replace(" ;", ";").replace("\u00a0:", ":")
     if len(_CACHE) < 50000:
         _CACHE[s] = r
     return r

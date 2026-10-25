@@ -225,6 +225,17 @@ def _sectors_from_codec(t) -> List[Sec]:
     return out
 
 
+def _sides_swapped(dd) -> bool:
+    """Faces logiques inversées dans le diskdef (ex. Commodore 1581 : face 0 = tête physique 1)."""
+    try:
+        c = next(iter(dd.tracks.cyls))
+        t0, t1 = dd.mk_track(c, 0), dd.mk_track(c, 1)
+        return (t0 is not None and t1 is not None and hasattr(t0, "sectors")
+                and t0.sectors[0].idam.h == 1 and t1.sectors[0].idam.h == 0)
+    except Exception:
+        return False
+
+
 def _load_via_greaseweazle(path: str, fmt: Optional[str]) -> Disk:
     from greaseweazle.codec import codec as gw_codec
     from greaseweazle.tools import util
@@ -279,7 +290,10 @@ def _load_via_greaseweazle(path: str, fmt: Optional[str]) -> Disk:
             score = sum(len(s.data) for t in tr.values() for s in t if s.ok)
             if score > best_score:
                 best_fmt, best_score = cand, score
-    best = decode(F.get_diskdef(best_fmt) if best_fmt else None)
+    best_def = F.get_diskdef(best_fmt) if best_fmt else None
+    best = decode(best_def)
+    if best_def is not None and _sides_swapped(best_def):
+        best = {(c, h ^ 1): v for (c, h), v in best.items()}
     d = Disk(path, os.path.splitext(path)[1].lower(), tracks=best, fmt=best_fmt)
     if best_fmt:
         d.notes.append(f"Décodé avec {best_fmt}")
@@ -362,7 +376,7 @@ def open_disk(path: str, fmt: Optional[str] = None) -> Disk:
     if ext in RAW_EXT or (ext == ".dsk" and not head.startswith(b"MV")):
         with open(path, "rb") as f:
             data = f.read()
-        if fmt and ext not in (".fd", ".adf", ".st"):
+        if fmt and ext in (".img", ".ima", ".dsk", ".vfd", ".flp", ".raw", ".bin"):
             d = _raw_from_diskdef(path, data, fmt, ext)
             if d is not None:
                 return d

@@ -98,7 +98,7 @@ _EXT_OVERRIDE = {
     "commodore.1571": ".d71", "commodore.1581": ".d81",
     "apple2.prodos.140": ".po", "acorn.dfs.ds": ".dsd", "acorn.dfs.ds80": ".dsd",
     "acorn.adfs.160": ".ads", "acorn.adfs.320": ".adm", "acorn.adfs.640": ".adl",
-    "ibm.scan": ".imd",
+    "ibm.scan": ".imd", "cpc.data": ".dsk", "cpc.system": ".dsk",
 }
 
 # Descriptions des types d'image (extension -> libellé).
@@ -159,6 +159,10 @@ def platforms() -> List[Platform]:
             plats.append(Platform(name, presets(prefix)))
 
     plats.append(Platform("Amstrad CPC", [
+        Preset("AMSDOS Data (40 pistes, 9 × 512, ID C1)", "cpc.data", ".dsk", None,
+               "Format CPC le plus courant (178 Ko)."),
+        Preset("AMSDOS Système / Vendor (40 pistes, ID 41)", "cpc.system", ".dsk", None,
+               "Disquettes système CP/M (169 Ko utiles)."),
         Preset("Auto (scan) – 40 pistes, 1 face", "ibm.scan", ".edsk", "c=0-39:h=0",
                "Lecteur 3,5\" : disquettes 3,5\" formatées CPC (40 pistes)."),
         Preset("Auto (scan) – 80 pistes, 2 faces", "ibm.scan", ".edsk", "c=0-79:h=0-1",
@@ -283,7 +287,19 @@ def human_size(n: int) -> str:
     return f"{k:.0f} Ko"
 
 
-def image_class(path: str):
+def image_class(path: str, fmt: Optional[str] = None):
+    """Classe d'image greaseweazle ; un .dsk CPC (format CPC demandé, ou en-tête EDSK) est un Extended DSK."""
+    if os.path.splitext(path)[1].lower() == ".dsk":
+        if fmt and fmt.startswith(("cpc.", "ibm.scan")):
+            return util.get_image_class("x.edsk")
+        head = b""
+        try:
+            with open(path, "rb") as f:
+                head = f.read(16)
+        except OSError:
+            pass
+        if head.startswith((b"EXTENDED CPC DSK", b"MV - CPC")):
+            return util.get_image_class("x.edsk")
     return util.get_image_class(path)
 
 

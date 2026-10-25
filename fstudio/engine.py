@@ -405,7 +405,7 @@ class ReadJob(Job):
         return flux
 
     def work(self, u):
-        img_cls = F.image_class(self.path)
+        img_cls = F.image_class(self.path, self.fmt)
         raw = F.is_flux_image(self.path) or self.fmt is None
         fmt_cls = F.get_diskdef(self.fmt) if self.fmt else None
         if self.fmt and fmt_cls is None:
@@ -638,6 +638,14 @@ class WriteJob(Job):
                 nbad += 1
                 self.log.emit(f"{tag} : ÉCHEC de vérification", "err")
             self.track_done.emit(res)
+            if self.verify and nver == 0 and nbad >= 4 and i == nbad - 1:
+                mean_us = sum(wl) / max(len(wl), 1) / u.sample_freq * 1e6
+                hint = ("Format double densité (DD) : si la disquette est HD (trou à droite), masquez ce "
+                        "trou avec un adhésif opaque ou utilisez une disquette DD." if mean_us > 4.5 else
+                        "Format haute densité (HD) : la disquette doit être une HD (trou à droite).")
+                raise gw_error.Fatal(f"Écriture abandonnée : les {nbad} premières pistes échouent à la "
+                                     f"vérification.\n{hint}\nVérifiez aussi que la disquette n'est pas "
+                                     "protégée en écriture.")
         self.progress.emit(len(tracks), len(tracks))
         dt = time.monotonic() - t0
         if nbad:
@@ -1278,7 +1286,7 @@ class ConvertJob(Job):
         if fmt_cls is None and isinstance(src, IMG):
             fmt_cls = src.fmt
         raw_out = F.is_flux_image(self.dst)
-        dst = F.image_class(self.dst).to_file(self.dst, None if raw_out else fmt_cls, False, {})
+        dst = F.image_class(self.dst, fmt).to_file(self.dst, None if raw_out else fmt_cls, False, {})
         if fmt_cls is not None:
             ts = _trackset(fmt_cls, None, "")
         else:

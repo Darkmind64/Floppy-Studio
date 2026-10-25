@@ -23,6 +23,13 @@ def amsdos_header(data: bytes) -> Optional[dict]:
             "user": data[0], "name": data[1:12].decode("ascii", "replace")}
 
 
+def _textual(b: bytes) -> bool:
+    if not b:
+        return True
+    ok = sum(1 for c in b[:4096] if c in (9, 10, 13) or 32 <= c < 127)
+    return ok >= 0.95 * min(len(b), 4096)
+
+
 class CPMFS(FileSystem):
     platform = "cpc"
     charset = "latin-1"
@@ -250,9 +257,12 @@ class CPMFS(FileSystem):
         if h:
             n = h["real"] or h["length"]
             return d[128:128 + n]
-        # fichier ASCII : couper au ^Z
+        # fichier ASCII : couper au ^Z (seulement si ce qui précède est du texte)
+        d = d[:e.size]
         cut = d.find(b"\x1a")
-        return d[:cut] if cut >= 0 else d[:e.size]
+        if cut >= 0 and _textual(d[:cut]):
+            return d[:cut]
+        return d
 
 
 def probe(disk) -> List[FileSystem]:
@@ -262,7 +272,7 @@ def probe(disk) -> List[FileSystem]:
     first = min(s.r for s in t0)
     if first not in LAYOUTS or len(t0) < 8 or len(t0) > 10:
         return []
-    if first == 0x01 and disk.kind not in ("edsk", "dsk"):
+    if first == 0x01 and disk.kind not in ("edsk", "dsk", ".dsk") and disk.fmt != "ibm.160":
         return []
     try:
         fs = CPMFS(disk, first)

@@ -918,7 +918,7 @@ class MainWindow(QMainWindow):
 
         g = QGroupBox("Récupération des secteurs illisibles")
         gl = QVBoxLayout(g)
-        gl.addWidget(_muted("Relit uniquement les secteurs manquants d'une image (format ci-dessus), en "
+        gl.addWidget(_muted("Relit uniquement les secteurs manquants d'une image (format actif), en "
                             "plusieurs passes avec repositionnement de la tête, et complète l'image. "
                             "Ou fusionne plusieurs lectures du même disque (lecteurs différents…)."))
         self.c_rec = QLineEdit()
@@ -1446,9 +1446,14 @@ class MainWindow(QMainWindow):
         self.settings.setValue("recent_images", r[:15])
         self._fill_recent()
         fmt = None
+        pr = self.x_pick.preset()
         if not self.x_auto.isChecked():
-            pr = self.x_pick.preset()
             fmt = pr.fmt if pr else None
+        elif pr and pr.fmt and os.path.splitext(path)[1].lower() in (".img", ".ima", ".dsk", ".vfd", ".flp"):
+            # image brute ambiguë : le format actif sert d'indice s'il correspond à la taille
+            g = F.geometry(pr.fmt)
+            if g and g.capacity == os.path.getsize(path):
+                fmt = pr.fmt
         self.goto_page(EXPLORER_ROW)
         self.explorer.open_path(path, fmt)
 
@@ -2039,6 +2044,13 @@ class MainWindow(QMainWindow):
             self.banner_btns.addWidget(b)
         self.banner.show()
 
+    def _on_failed(self, msg: str):
+        if msg in ("Annulé", "SystemExit") or not msg:
+            return
+        lines = [x for x in msg.splitlines() if x.strip()]
+        txt = html.escape(lines[0], False) + "".join("<br>" + html.escape(x, False) for x in lines[1:4])
+        self.show_banner(txt, [("Masquer", self.banner.hide)], "err")
+
     def _open_folder(self, path: str):
         d = path if os.path.isdir(path) else os.path.dirname(path)
         if hasattr(os, "startfile") and os.path.isdir(d):
@@ -2055,6 +2067,7 @@ class MainWindow(QMainWindow):
         job.track_done.connect(self._on_track)
         job.progress.connect(self._on_progress)
         job.result.connect(self._on_result)
+        job.failed.connect(self._on_failed)
         job.finished.connect(self._on_finished)
         if ws_title:
             self.ws_title.setText(ws_title)
