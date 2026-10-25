@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
 
 from . import APP_NAME, __version__
 from . import engine as E
+from . import archive as AR
 from . import emulators as EM
 from . import formats as F
 from . import theme as T
@@ -29,6 +30,7 @@ from .catalog import Catalog
 from .catalog_view import CatalogView
 from .fs import mkfs as MK
 from .fs import open_disk
+from .fs.base import human
 from .widgets import FluxHistogram, Legend, RpmChart, StatTile, TrackMap, card
 
 ANALYSE_ROW = 3
@@ -150,6 +152,12 @@ class FormatBar(QFrame):
         lay.addWidget(self.plat)
         lay.addWidget(self.fmt)
         lay.addWidget(self.geo, 1)
+        self.dstep = QCheckBox("Pas double")
+        self.dstep.setToolTip("Disquette 40 pistes (360 Ko, CPC, C64…) dans un lecteur 80 pistes (5,25\" HD) :\n"
+                              "la tête avance de deux pistes physiques par piste logique.\n"
+                              "Inutile avec un lecteur 40 pistes ou un lecteur 3,5\".")
+        self.dstep.toggled.connect(self._dstep_changed)
+        lay.addWidget(self.dstep)
         self.extra = lay
         self.plat.currentIndexChanged.connect(self._fill)
         self.fmt.currentIndexChanged.connect(self._geo)
@@ -179,9 +187,21 @@ class FormatBar(QFrame):
             txt = f"<code>{pr.fmt}</code> · " + (g.desc if g else "") + f" · image <code>{pr.ext}</code>"
         if pr.tracks:
             txt += f" · pistes <code>{pr.tracks}</code>"
+        g = F.geometry(pr.fmt) if pr.fmt else None
+        self.dstep.setVisible(bool(g and g.cyls <= 43) or bool(pr.tracks and "c=0-39" in pr.tracks))
+        if self.dstep.isVisible() and self.dstep.isChecked():
+            txt += " · <b>pas double</b>"
         self.geo.setText(txt)
         self.geo.setToolTip(pr.note or "")
         self.format_changed.emit(pr)
+
+    def _dstep_changed(self, on: bool):
+        E.DOUBLE_STEP = on
+        QSettings("FloppyStudio", "FloppyStudio").setValue("double_step", on)
+        self._geo()
+
+    def double_step(self) -> bool:
+        return self.dstep.isVisible() and self.dstep.isChecked()
 
     def preset(self) -> Optional[F.Preset]:
         return self.fmt.currentData()
@@ -190,7 +210,7 @@ class FormatBar(QFrame):
         pr = self.preset()
         if pr is None:
             return "—"
-        return f"{self.plat.currentText()} — {pr.label}"
+        return f"{self.plat.currentText()} — {pr.label}" + (" · pas double" if self.double_step() else "")
 
     def select_format(self, fmt: Optional[str]) -> bool:
         cur = self.preset()
@@ -247,6 +267,7 @@ class MainWindow(QMainWindow):
         b.clicked.connect(self.start_analyse)
         self.fmt_bar.extra.addWidget(b)
         self.fmt_bar.format_changed.connect(self._on_format_changed)
+        self.fmt_bar.dstep.setChecked(str(self.settings.value("double_step", "false")).lower() == "true")
         outer.addWidget(self.fmt_bar)
         self.r_pick = self.w_pick = self.f_pick = self.cp_pick = self.x_pick = self.c_pick = self.fmt_bar
 
@@ -260,6 +281,8 @@ class MainWindow(QMainWindow):
         self.explorer.log.connect(self.log)
         self.explorer.write_request.connect(self.write_image_now)
         self.explorer.loaded_path.connect(self._catalog_auto)
+        self.explorer.loaded_path.connect(self._ident_loaded)
+        QTimer.singleShot(5000, lambda: AR.purge_cache())
         self.cat = Catalog()
         self.catalog = CatalogView(self.cat)
         self.catalog.log.connect(self.log)
@@ -626,7 +649,7 @@ class MainWindow(QMainWindow):
             return
         self.r_batch_lbl.setText(f"{self._batch_count} disquette(s) lue(s).")
         if self.r_watch.isChecked() and self.dev.connected:
-            self._batch_wait = True
+            self._batch_wait, self._batch_kind = True, "read"
             self.log("Lot : retirez la disquette et insérez la suivante (Annuler pour terminer).", "info")
             self.run_job(E.WatchJob(self.dev, self._drive(), True), "En attente de la disquette suivante")
             return
@@ -637,6 +660,48 @@ class MainWindow(QMainWindow):
         else:
             self._batch_active = False
             self.log(f"Lot terminé : {self._batch_count} disquette(s).", "ok")
+
+    def _wbatch_done(self, ok: bool, detail: str = ""):
+        self._wbatch_count += 1
+        if not ok:
+            self._wbatch_bad.append(self._wbatch_count)
+            QApplication.beep()
+        self._wbatch_next = True
+        n = self._wbatch_count
+        self.w_batch_lbl.setText(f"{n} disquette(s) écrite(s)" + (
+            f", en échec : n° {', '.join(map(str, self._wbatch_bad))}" if self._wbatch_bad else "") + ".")
+        self.show_banner(f"Disquette n°{n} : " + ("écriture réussie" if ok else f"<b>échec</b> {detail}") +
+                         " — retirez-la et insérez la suivante.",
+                         [("⏹  Terminer la série", self._wbatch_stop)], "ok" if ok else "warn")
+
+    def _wbatch_stop(self):
+        was = getattr(self, "_wbatch_active", False)
+        self._wbatch_active = False
+        if self.job and self.job.isRunning() and isinstance(self.job, E.WatchJob):
+            self.job.cancel()
+        if was:
+            self._wbatch_summary()
+
+    def _wbatch_summary(self):
+        n, bad = getattr(self, "_wbatch_count", 0), getattr(self, "_wbatch_bad", [])
+        self.log(f"Série terminée : {n} disquette(s) écrite(s), {len(bad)} en échec.", "ok" if not bad else "warn")
+        self.show_banner(f"Série terminée : {n} disquette(s) écrite(s)" +
+                         (f", {len(bad)} en échec (n° {', '.join(map(str, bad))})" if bad else " sans erreur"),
+                         [], "ok" if not bad else "warn")
+
+    def _wbatch_continue(self):
+        if not getattr(self, "_wbatch_active", False):
+            return
+        if self.w_watch.isChecked() and self.dev.connected:
+            self._batch_wait, self._batch_kind = True, "write"
+            self.run_job(E.WatchJob(self.dev, self._drive(), True), "En attente de la disquette suivante")
+            return
+        r = QMessageBox.question(self, "Duplication en série", f"{self._wbatch_count} disquette(s) écrite(s).<br>"
+                                 "Insérez la disquette suivante puis <b>Oui</b>, ou <b>Non</b> pour terminer.")
+        if r == QMessageBox.Yes:
+            self.start_write()
+        else:
+            self._wbatch_stop()
 
     # --- Écrire
     def _page_write(self):
@@ -679,6 +744,19 @@ class MainWindow(QMainWindow):
         f.addRow(self.w_erase_empty)
         f.addRow("Essais si échec", self.w_retries)
         f.addRow("Pistes", self.w_tracks)
+        v.addWidget(g)
+
+        g = QGroupBox("Duplication en série")
+        gl = QVBoxLayout(g)
+        self.w_batch = QCheckBox("Écrire sur plusieurs disquettes à la suite")
+        self.w_watch = QCheckBox("Détecter l'insertion de la disquette suivante")
+        self.w_watch.setChecked(True)
+        self.w_watch.setToolTip("Utilise la ligne « disk change » du lecteur (broche 34) ;\n"
+                                "sinon une confirmation est demandée entre chaque disquette.")
+        gl.addWidget(self.w_batch)
+        gl.addWidget(self.w_watch)
+        self.w_batch_lbl = _muted("")
+        gl.addWidget(self.w_batch_lbl)
         v.addWidget(g)
 
         self.w_go = QPushButton("📤  Écrire sur la disquette")
@@ -732,7 +810,14 @@ class MainWindow(QMainWindow):
         self.f_verify.setChecked(True)
         self.f_erase = QCheckBox("Effacer chaque piste avant écriture")
         self.f_erase.setToolTip("Utile pour une disquette d'un autre format ou d'une autre densité")
+        self.f_surface = QCheckBox("Test de surface : isoler les zones défectueuses")
+        self.f_surface.setChecked(True)
+        self.f_surface.setToolTip("Les pistes qui échouent à la vérification sont marquées inutilisables dans le "
+                                  "système de fichiers\n(clusters défectueux FAT, blocs Amiga, blocs Thomson, "
+                                  "fichier caché BADSECT.$$$ sur CPC).")
+        self.f_verify.toggled.connect(self.f_surface.setEnabled)
         f.addRow(self.f_verify)
+        f.addRow(self.f_surface)
         f.addRow(self.f_erase)
         v.addWidget(g)
 
@@ -786,7 +871,7 @@ class MainWindow(QMainWindow):
         g = F.geometry(sp.fmt)
         txt = f"<code>{sp.fmt}</code> · " + (g.desc if g else "")
         if sp.note:
-            txt += f"<br>{html.escape(sp.note)}"
+            txt += f"<br>{html.escape(i18n.tr(sp.note), False)}"
         self.f_info.setText(txt)
 
     def _format_payload(self):
@@ -819,6 +904,10 @@ class MainWindow(QMainWindow):
         path = os.path.join(EM.session_dir(), f"format_{int(time.time())}{ext}")
         with open(path, "wb") as fh:
             fh.write(data)
+        sp = self._fmt_spec()
+        self._fmt_surface = ({"spec": sp, "data": data, "path": path, "fmt": fmt, "desc": desc}
+                             if sp and self.f_verify.isChecked() and self.f_surface.isChecked() else None)
+        self._fmt_fix = None
         self._write_file(path, fmt, self.f_verify.isChecked(), self.f_erase.isChecked(),
                          f"Formatage — {desc}")
 
@@ -1348,11 +1437,21 @@ class MainWindow(QMainWindow):
             self.catalog.add_paths([d])
 
     def _catalog_auto(self, path: str, flux: str = ""):
-        if self.cat_auto.isChecked() and os.path.isfile(path):
+        if self.cat_auto.isChecked() and AR.exists(path):
             self.catalog.add_paths([path], {path: {"flux": flux}} if flux else None, quiet=True)
 
+    def _ident_loaded(self, path: str):
+        try:
+            ids = self.cat.identify_file(path) if not F.is_flux_image(AR.split(path)[0]) else []
+        except Exception:
+            ids = []
+        if ids:
+            game, _rom, src = ids[0]
+            self.log(f"Image identifiée : {game} ({src})", "ok")
+            self.explorer.sub.setText(self.explorer.sub.text() + f" · 🏷 <b>{html.escape(game)}</b>")
+
     def _explore_from_catalog(self, path: str, fpath: str):
-        if not os.path.isfile(path):
+        if not AR.exists(path):
             QMessageBox.warning(self, APP_NAME, f"Image introuvable :\n{path}")
             return
         self.explorer.pending_select = fpath or None
@@ -1427,10 +1526,25 @@ class MainWindow(QMainWindow):
     def _fill_recent(self):
         self.x_recent.clear()
         for p in self._recent_list():
-            it = QListWidgetItem(os.path.basename(p))
+            it = QListWidgetItem(AR.display(p))
             it.setToolTip(p)
             it.setData(Qt.UserRole, p)
             self.x_recent.addItem(it)
+
+    def _from_archive(self, path: str) -> Optional[str]:
+        """Archive .zip → chemin virtuel « archive.zip::image » (choix si plusieurs images) ; sinon inchangé."""
+        if not AR.is_archive(path):
+            return path
+        imgs = AR.images_in(path)
+        if not imgs:
+            QMessageBox.warning(self, APP_NAME, f"Aucune image disquette dans {os.path.basename(path)}.")
+            return None
+        if len(imgs) == 1:
+            return path + AR.SEP + imgs[0]
+        from PySide6.QtWidgets import QInputDialog
+        m, ok = QInputDialog.getItem(self, "Archive", f"{os.path.basename(path)} contient {len(imgs)} images :",
+                                     imgs, 0, False)
+        return path + AR.SEP + m if ok and m else None
 
     def _explore_browse(self):
         p, _ = QFileDialog.getOpenFileName(self, "Ouvrir une image", self._last_dir(), F.image_filter(True))
@@ -1439,7 +1553,10 @@ class MainWindow(QMainWindow):
             self.explore(p)
 
     def explore(self, path: str):
-        if not path or not os.path.isfile(path):
+        path = self._from_archive(path) if path else path
+        if not path:
+            return
+        if not AR.exists(path):
             QMessageBox.warning(self, APP_NAME, "Fichier introuvable.")
             return
         r = [path] + [x for x in self._recent_list() if x != path]
@@ -1452,7 +1569,7 @@ class MainWindow(QMainWindow):
         elif pr and pr.fmt and os.path.splitext(path)[1].lower() in (".img", ".ima", ".dsk", ".vfd", ".flp"):
             # image brute ambiguë : le format actif sert d'indice s'il correspond à la taille
             g = F.geometry(pr.fmt)
-            if g and g.capacity == os.path.getsize(path):
+            if g and g.capacity == os.path.getsize(AR.extract(path)):
                 fmt = pr.fmt
         self.goto_page(EXPLORER_ROW)
         self.explorer.open_path(path, fmt)
@@ -2003,9 +2120,14 @@ class MainWindow(QMainWindow):
 
     def _write_path_changed(self):
         p = self.w_path.text().strip()
-        if not p or not os.path.isfile(p):
+        if p and AR.is_archive(p) and os.path.isfile(p):
+            v = self._from_archive(p)
+            self.w_path.setText(v or "")
+            p = v or ""
+        if not p or not AR.exists(p):
             self.w_info.setText("")
             return
+        p = AR.extract(p)
         ext = os.path.splitext(p)[1].lower()
         size = os.path.getsize(p)
         flux = F.is_flux_image(p)
@@ -2013,6 +2135,11 @@ class MainWindow(QMainWindow):
         self.w_rawfmt.setEnabled(flux)
         info = f"{F.IMAGE_DESC.get(ext, ext)} · {size:,} octets".replace(",", " ")
         fmt = F.default_format_for(p)
+        if fmt and not flux:
+            g0 = F.geometry(fmt)
+            if g0 and g0.capacity and g0.capacity != size:
+                alt = [x for x in F.guess_by_size(p) if x.split(".")[0] == fmt.split(".")[0]]
+                fmt = alt[0] if alt else fmt
         guesses = [] if fmt else F.guess_by_size(p)
         if fmt:
             self.w_pick.select_format(fmt)
@@ -2045,7 +2172,13 @@ class MainWindow(QMainWindow):
         self.banner.show()
 
     def _on_failed(self, msg: str):
+        if msg == "Annulé" and getattr(self, "_wbatch_active", False) and isinstance(self.job, E.WriteJob):
+            self._wbatch_stop()
+            return
         if msg in ("Annulé", "SystemExit") or not msg:
+            return
+        if getattr(self, "_wbatch_active", False) and isinstance(self.job, E.WriteJob):
+            self._wbatch_done(False, html.escape(msg.splitlines()[0]))
             return
         lines = [x for x in msg.splitlines() if x.strip()]
         txt = html.escape(lines[0], False) + "".join("<br>" + html.escape(x, False) for x in lines[1:4])
@@ -2139,19 +2272,24 @@ class MainWindow(QMainWindow):
 
     def start_write(self):
         path = self.w_path.text().strip()
-        if not os.path.isfile(path):
+        if not path or not AR.exists(path):
             QMessageBox.warning(self, APP_NAME, "Choisissez une image à écrire.")
             return
+        shown = AR.display(path)
+        path = AR.extract(path)
         flux = F.is_flux_image(path) and self.w_rawfmt.isChecked()
         pr = self.w_pick.preset()
         fmt = None if flux else (pr.fmt if pr else None)
         if not flux and fmt is None:
             QMessageBox.warning(self, APP_NAME, "Sélectionnez le format de l'image.")
             return
-        if QMessageBox.warning(
+        cont = self.w_batch.isChecked() and getattr(self, "_wbatch_active", False)
+        if not self.w_batch.isChecked():
+            self._wbatch_active = False
+        if not cont and QMessageBox.warning(
                 self, "Confirmer l'écriture",
                 f"Le contenu de la disquette va être <b>définitivement remplacé</b> par :<br><br>"
-                f"<code>{html.escape(os.path.basename(path))}</code><br>Format : {fmt or 'flux brut'}<br><br>"
+                f"<code>{html.escape(shown)}</code><br>Format : {fmt or 'flux brut'}<br><br>"
                 "Vérifiez que la disquette n'est pas protégée en écriture (volet fermé).",
                 QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
@@ -2162,9 +2300,13 @@ class MainWindow(QMainWindow):
             planned, cyls = None, 80
         g = F.geometry(fmt)
         self._reset_stats(cyls, [0, 1], g.nsec if g else 0, planned)
+        if self.w_batch.isChecked() and not cont:
+            self._wbatch_active, self._wbatch_count, self._wbatch_bad = True, 0, []
+            self.w_batch_lbl.setText("")
         job = E.WriteJob(self.dev, self._drive(), path, fmt, tracks, self.w_verify.isChecked(),
                          self.w_erase.isChecked(), self.w_retries.value(), self.w_erase_empty.isChecked())
-        self.run_job(job, f"Écriture ← {os.path.basename(path)}")
+        n = f" — disquette n°{self._wbatch_count + 1}" if getattr(self, "_wbatch_active", False) else ""
+        self.run_job(job, f"Écriture ← {shown}{n}")
 
     def start_analyse(self):
         if not self.dev.connected:
@@ -2249,6 +2391,11 @@ class MainWindow(QMainWindow):
 
     def start_convert(self):
         src, dst = self.c_src.text().strip(), self.c_dst.text().strip()
+        if src and AR.is_archive(src):
+            src = self._from_archive(src) or ""
+            self.c_src.setText(src)
+        if src and AR.exists(src):
+            src = AR.extract(src)
         if not os.path.isfile(src) or not dst:
             QMessageBox.warning(self, APP_NAME, "Choisissez une source et une destination.")
             return
@@ -2313,6 +2460,17 @@ class MainWindow(QMainWindow):
                 if best["ratio"] >= 0.95:
                     self.r_pick.select_format(best["fmt"])
             self.hist.set_hist(d.get("hist", []), "Flux piste 0.0")
+            ds = d.get("double_step")
+            if ds is not None and ds != self.fmt_bar.dstep.isChecked():
+                if ds:
+                    self.show_banner("Disquette 40 pistes dans un lecteur 80 pistes : le <b>pas double</b> est "
+                                     "nécessaire pour la lire correctement.",
+                                     [("Activer le pas double", lambda: (self.fmt_bar.dstep.setChecked(True),
+                                                                         self.banner.hide()))], "warn")
+                else:
+                    self.show_banner("Le pas double est activé mais cette disquette n'en a pas besoin.",
+                                     [("Désactiver", lambda: (self.fmt_bar.dstep.setChecked(False),
+                                                              self.banner.hide()))], "warn")
         elif k == "rpm_sample":
             self.t_rpm_chart.add(d["rpm"])
             self.s_rpm.set(f"{d['rpm']:.1f}")
@@ -2383,6 +2541,15 @@ class MainWindow(QMainWindow):
                 msg = (f"Image enregistrée : <b>{html.escape(os.path.basename(p))}</b>"
                        + (f" — <span style='color:{T.STATUS['bad']}'>{d['bad']} secteur(s) illisible(s)</span>"
                           if d["bad"] else " — lecture parfaite"))
+                try:
+                    ids = self.cat.identify_file(p) if not F.is_flux_image(p) else []
+                except Exception:
+                    ids = []
+                if ids:
+                    msg += (f"<br>🏷 Identifiée : <b>{html.escape(ids[0][0])}</b> "
+                            f"<span style='color:{T.MUTED}'>({html.escape(ids[0][2])})</span>")
+                elif not d["bad"] and self.cat.dat_sources() and not F.is_flux_image(p):
+                    msg += f"<br><span style='color:{T.MUTED}'>Image inconnue des bases DAT importées.</span>"
                 acts = [("📂  Explorer", lambda: self.explore(p)), ("📁  Dossier", lambda: self._open_folder(p)),
                         ("📋  Rapport", self.show_report)]
                 if d["bad"] and not F.is_flux_image(p):
@@ -2390,6 +2557,17 @@ class MainWindow(QMainWindow):
                 acts.append(("📤  Écrire une copie", lambda: (self.w_path.setText(p), self._write_path_changed(),
                                                               self.goto_page(1))))
                 self.show_banner(msg, acts, "warn" if d["bad"] else "ok")
+        elif k == "write" and getattr(self, "_wbatch_active", False) and not getattr(self, "_fmt_surface", None) \
+                and not getattr(self, "_fmt_fix", None):
+            self._wbatch_done(not d["failed"], f"({d['failed']} piste(s) non vérifiée(s))")
+        elif k == "write" and getattr(self, "_fmt_surface", None):
+            self._surface_result(d)
+        elif k == "write" and getattr(self, "_fmt_fix", None):
+            fx, self._fmt_fix = self._fmt_fix, None
+            ok = not d["failed"]
+            self.show_banner(f"Formatage terminé — {len(fx['bad'])} piste(s) défectueuse(s) isolée(s) "
+                             f"({human(fx['lost'])} inutilisables)" + ("" if ok else " — réécriture incomplète"),
+                             [("🔍  Analyser la disquette", self.start_analyse)], "warn")
         elif k == "write" and d["failed"]:
             QMessageBox.warning(self, APP_NAME, f"{d['failed']} piste(s) n'ont pas pu être vérifiées.\n"
                                 "Disquette probablement abîmée.")
@@ -2398,6 +2576,44 @@ class MainWindow(QMainWindow):
                              [("🔍  Analyser la disquette", self.start_analyse),
                               ("📥  Relire", lambda: self.goto_page(0))])
 
+    def _surface_result(self, d: dict):
+        info, self._fmt_surface = self._fmt_surface, None
+        bad = sorted(k for k, r in self.track_results.items() if r.status == "failed")
+        if not bad:
+            self.show_banner(f"Formatage terminé : {html.escape(info['desc'])} — surface sans défaut "
+                             f"({d['verified']} piste(s) vérifiée(s))",
+                             [("🔍  Analyser la disquette", self.start_analyse)])
+            return
+        tl = ", ".join(f"{c}.{h}" for c, h in bad)
+        try:
+            new, lost = MK.mark_bad(info["spec"], info["data"], bad)
+        except MK.BadMarkError as e:
+            self.show_banner(f"Disquette inutilisable dans ce format : {html.escape(str(e))}. "
+                             f"Pistes défectueuses : {tl}", [], "err")
+            return
+        except NotImplementedError:
+            self.show_banner(f"{len(bad)} piste(s) défectueuse(s) ({tl}) — isolement non pris en charge pour "
+                             "ce système : évitez cette disquette.", [], "err")
+            return
+        p2 = os.path.splitext(info["path"])[0] + "_bad" + os.path.splitext(info["path"])[1]
+        with open(p2, "wb") as fh:
+            fh.write(new)
+        fmt_cls = F.get_diskdef(info["fmt"])
+        changed = [(c, h) for c, h, off, size, _n in E._img_layout(p2, fmt_cls)
+                   if new[off:off + size] != info["data"][off:off + size]]
+        self.log(f"Test de surface : pistes défectueuses {tl} — {human(lost)} isolés ; "
+                 f"mise à jour du système de fichiers ({len(changed)} piste(s)).", "warn")
+        self._fmt_fix = {"bad": bad, "lost": lost}
+        QTimer.singleShot(300, lambda: self.run_job(
+            E.WriteJob(self.dev, self._drive(), p2, info["fmt"], self._track_union(changed), True, False, 3,
+                       False), "Formatage — isolement des zones défectueuses"))
+
+    @staticmethod
+    def _track_union(tracks) -> str:
+        cyls = sorted({c for c, _ in tracks})
+        heads = sorted({h for _, h in tracks})
+        return f"c={','.join(map(str, cyls))}:h={','.join(map(str, heads))}"
+
     def _on_finished(self):
         self._explore_after_read = False
         if getattr(self, "_conv_queue", None):
@@ -2405,11 +2621,19 @@ class MainWindow(QMainWindow):
         if getattr(self, "_batch_next", False):
             self._batch_next = False
             QTimer.singleShot(400, self._batch_continue)
+        if getattr(self, "_wbatch_next", False):
+            self._wbatch_next = False
+            QTimer.singleShot(400, self._wbatch_continue)
         if getattr(self, "_batch_wait", False):
             self._batch_wait = False
+            kind = getattr(self, "_batch_kind", "read")
             if getattr(self, "_batch_go", False):
                 self._batch_go = False
-                QTimer.singleShot(400, self.start_read)
+                QTimer.singleShot(400, self.start_write if kind == "write" else self.start_read)
+            elif kind == "write":
+                if getattr(self, "_wbatch_active", False):
+                    self._wbatch_active = False
+                    self._wbatch_summary()
             else:
                 self._batch_active = False
                 self.log(f"Lot terminé : {getattr(self, '_batch_count', 0)} disquette(s).", "ok")
@@ -2623,6 +2847,8 @@ class MainWindow(QMainWindow):
                     imgs += [os.path.join(root, n) for n in names if os.path.splitext(n)[1].lower() in IMAGE_EXT]
             elif os.path.splitext(p)[1].lower() in IMAGE_EXT:
                 imgs.append(p)
+            elif AR.is_archive(p):
+                imgs += [p + AR.SEP + m for m in AR.images_in(p)]
         if not imgs:
             QMessageBox.information(self, APP_NAME, "Aucune image disquette reconnue dans le dépôt.")
             return
@@ -2674,7 +2900,7 @@ class MainWindow(QMainWindow):
         os.makedirs(dest.text(), exist_ok=True)
         self._conv_queue = []
         for p in imgs:
-            out = os.path.join(dest.text(), os.path.splitext(os.path.basename(p))[0] + pr.ext)
+            out = os.path.join(dest.text(), os.path.splitext(os.path.basename(AR.split(p)[1] or p))[0] + pr.ext)
             if os.path.abspath(out) == os.path.abspath(p):
                 continue
             self._conv_queue.append((p, out, pr.fmt))
@@ -2686,7 +2912,14 @@ class MainWindow(QMainWindow):
         if not q:
             return
         src, dst, fmt = q.pop(0)
-        self.run_job(E.ConvertJob(self.dev, src, dst, fmt), f"Conversion {os.path.basename(src)} "
+        shown = AR.display(src)
+        try:
+            src = AR.extract(src)
+        except Exception as ex:
+            self.log(f"{shown} : {ex}", "err")
+            QTimer.singleShot(0, self._next_conversion)
+            return
+        self.run_job(E.ConvertJob(self.dev, src, dst, fmt), f"Conversion {shown} "
                                                            f"({len(q)} restante(s))")
 
     def closeEvent(self, e):

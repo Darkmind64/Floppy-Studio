@@ -20,6 +20,13 @@ automatiquement. Les mêmes fonctions d'exploration et de conversion marchent sa
 
 - **Format actif unique** : choisi une seule fois dans la barre du haut (ou détecté automatiquement), il
   s'applique à toutes les pages (lecture, écriture, copie, formatage, explorateur, conversion).
+- **Test de surface au formatage** : les pistes défectueuses sont isolées dans le système de fichiers (FAT,
+  Amiga, Thomson, CPC) pour réutiliser une disquette abîmée.
+- **Duplication en série** : une image écrite sur plusieurs disquettes à la suite, avec détection d'insertion.
+- **Identification TOSEC / No-Intro** : import des fichiers DAT ; images et disquettes lues reconnues par
+  empreinte, titres renommés automatiquement.
+- **Archives .zip** : images ouvertes, écrites, converties et cataloguées sans extraction manuelle.
+- **Pas double** pour les disquettes 40 pistes dans un lecteur 5,25" 80 pistes (détecté à l'analyse).
 - **Actions suivantes** proposées après chaque lecture, écriture ou conversion (explorer, ouvrir le dossier,
   récupérer les secteurs illisibles, écrire une copie…).
 - **Lire** une disquette vers une image (IMG, ADF, ST, FD, D64, IMD, EDSK, HFE, SCP…) avec relectures,

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDial
                                QScrollArea, QSplitter, QStyle, QTableWidget, QTableWidgetItem,
                                QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
+from . import archive as A
 from . import emulators as EM
 from . import formats as F
 from . import theme as T
@@ -989,7 +990,14 @@ class ExplorerView(QWidget):
             return
         self.modified = False
         self._disk_dirty = False
-        self.title.setText(os.path.basename(path))
+        self.origin = path
+        if A.is_virtual(path):
+            try:
+                path = A.extract(path)
+            except Exception as ex:
+                self._failed(f"archive : {ex}")
+                return
+        self.title.setText(A.display(self.origin))
         self.sub.setText("Analyse de l'image…")
         self.tree.clear()
         self._clear_preview()
@@ -999,6 +1007,20 @@ class ExplorerView(QWidget):
         self.job.failed.connect(self._failed)
         self.job.finished.connect(QApplication.restoreOverrideCursor)
         self.job.start()
+
+    def _base_path(self) -> str:
+        """Chemin de référence pour enregistrer/exporter : à côté de l'archive pour une image zippée."""
+        o = getattr(self, "origin", "")
+        if self.disk is not None and A.is_virtual(o) and self.disk.path == A.extract(o):
+            a, m = A.split(o)
+            return os.path.join(os.path.dirname(a), os.path.basename(m))
+        return self.disk.path
+
+    def _shown_name(self) -> str:
+        o = getattr(self, "origin", "")
+        if self.disk is not None and A.is_virtual(o) and self.disk.path == A.extract(o):
+            return A.display(o)
+        return os.path.basename(self.disk.path)
 
     def _failed(self, msg: str):
         self.sub.setText("Impossible de lire l'image : " + msg.splitlines()[0])
@@ -1023,7 +1045,7 @@ class ExplorerView(QWidget):
             self._update_buttons()
             return
         self._select_volume(0)
-        self.loaded_path.emit(disk.path)
+        self.loaded_path.emit(self.origin if A.is_virtual(getattr(self, "origin", "")) else disk.path)
         sel = getattr(self, "pending_select", None)
         self.pending_select = None
         if sel:
@@ -1043,7 +1065,7 @@ class ExplorerView(QWidget):
         self.fs = fs = self.vols[i]
         self._alloc = None
         self.tree.drop_import = self._drop_import if fs.writable else None
-        self.title.setText(f"{os.path.basename(self.disk.path)} — {fs.title()}")
+        self.title.setText(f"{self._shown_name()} — {fs.title()}")
         bits = [f"{k} : {v}" for k, v in fs.info if k not in ("Système",)]
         bad = self.disk.bad_sectors()
         if bad:
@@ -1310,7 +1332,7 @@ class ExplorerView(QWidget):
         if not d:
             return
         self._last_export = d
-        sub = safe_name(os.path.splitext(os.path.basename(self.disk.path))[0]
+        sub = safe_name(os.path.splitext(os.path.basename(self._base_path()))[0]
                         + (f" - {self.fs.volume_name}" if self.fs.volume_name else ""))
         if not self._selected_entries():
             d = os.path.join(d, sub)
@@ -1566,7 +1588,7 @@ class ExplorerView(QWidget):
 
     def save_image(self):
         if self.disk is not None and getattr(self, "_disk_dirty", False):
-            base, ext = os.path.splitext(self.disk.path)
+            base, ext = os.path.splitext(self._base_path())
             if ext.lower() not in (".img", ".ima", ".st", ".dsk", ".edsk", ".fd", ".adf", ".d64", ".d81"):
                 ext = ".img"
             p, _ = QFileDialog.getSaveFileName(self, "Enregistrer l'image", base + "_modif" + ext, f"*{ext}")
@@ -1584,7 +1606,7 @@ class ExplorerView(QWidget):
             return
         if not (self.fs and self.fs.writable):
             return
-        base, ext = os.path.splitext(self.disk.path)
+        base, ext = os.path.splitext(self._base_path())
         ext = ext.lower() if ext.lower() in (".img", ".ima", ".st", ".dsk", ".vfd") else self.fs.save_ext
         if self.fs.platform in ("cpc", "thomson", "amiga", "c64"):
             ext = self.fs.save_ext

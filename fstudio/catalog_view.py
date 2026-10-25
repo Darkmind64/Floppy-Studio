@@ -10,11 +10,13 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QFileDialo
                                QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
                                QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
+from . import archive as AR
 from . import theme as T
 from .catalog import PLATFORM_LABEL, Catalog, ScanJob
 from .fs import human
 
-COLS = ["Titre", "Plateforme", "Système", "Fichiers", "Taille", "Illisibles", "Ajouté", "Notes", "Chemin"]
+COLS = ["Titre", "Plateforme", "Système", "Fichiers", "Taille", "Illisibles", "Ajouté", "Notes", "Chemin",
+        "Identification (DAT)"]
 
 
 class CatalogView(QWidget):
@@ -59,6 +61,8 @@ class CatalogView(QWidget):
         bar.addWidget(self.plat)
         for txt, slot, tip in (("📂  Ouvrir", self.open_selected, "Ouvrir l'image dans l'explorateur"),
                                ("🗂  Doublons", self.show_duplicates, "Images identiques et fichiers en double"),
+                               ("🏷  Bases DAT…", self.show_dats,
+                                "Identifier les images avec les bases TOSEC, No-Intro… (fichiers DAT)"),
                                ("🗑  Retirer", self.remove_selected, "Retirer du catalogue (le fichier est conservé)"),
                                ("⤓  CSV…", self.export_csv, "Exporter le catalogue en CSV")):
             b = QPushButton(txt)
@@ -78,6 +82,7 @@ class CatalogView(QWidget):
         self.t.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.t.setSortingEnabled(True)
         self.t.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.t.horizontalHeader().moveSection(9, 1)
         self.t.itemChanged.connect(self._edited)
         self.t.itemSelectionChanged.connect(self._show_files)
         self.t.cellDoubleClicked.connect(lambda r, c: self.open_selected() if c not in (0, 7) else None)
@@ -126,7 +131,8 @@ class CatalogView(QWidget):
         for i, r in enumerate(self.rows):
             vals = [r["title"], PLATFORM_LABEL.get(r["platform"], r["platform"] or "?"), r["fs"] or "—",
                     r["nfiles"], human(r["size"] or 0), r["bad"] or 0,
-                    _t.strftime("%d/%m/%Y", _t.localtime(r["added"] or 0)), r["notes"] or "", r["path"]]
+                    _t.strftime("%d/%m/%Y", _t.localtime(r["added"] or 0)), r["notes"] or "", r["path"],
+                    (r.get("ident") or "").split("\t")[0]]
             for c, val in enumerate(vals):
                 it = QTableWidgetItem()
                 if c in (3, 5):
@@ -138,7 +144,10 @@ class CatalogView(QWidget):
                     it.setFlags(it.flags() & ~Qt.ItemIsEditable)
                 if c == 5 and val:
                     it.setForeground(QColor(T.STATUS["bad"]))
-                if not os.path.isfile(r["path"]):
+                if c == 9 and r.get("ident"):
+                    it.setForeground(QColor(T.STATUS["ok"]))
+                    it.setToolTip("Base : " + r["ident"].split("\t")[-1])
+                if not os.path.isfile(AR.split(r["path"])[0]):
                     it.setForeground(QColor(T.MUTED))
                     it.setToolTip("Fichier introuvable")
                 self.t.setItem(i, c, it)
@@ -164,6 +173,88 @@ class CatalogView(QWidget):
         self.tabs.setTabText(1, f"Fichiers trouvés ({len(hits)})")
         if hits and not self.t.selectedItems():
             self.tabs.setCurrentIndex(1)
+
+    def show_dats(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Bases d'identification (DAT)")
+        dlg.resize(620, 420)
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("Les fichiers <b>DAT</b> (TOSEC, No-Intro, Redump… au format Logiqx XML ou ClrMamePro) "
+                             "listent les empreintes des images connues. Une fois importés, les images du "
+                             "catalogue et les disquettes lues sont reconnues automatiquement.<br>"
+                             "<span style='color:%s'>Téléchargement : tosecdev.org (packs .zip acceptés tels "
+                             "quels).</span>" % T.MUTED))
+        lay.itemAt(0).widget().setWordWrap(True)
+        tab = QTableWidget(0, 2)
+        tab.setHorizontalHeaderLabels(["Base", "Entrées"])
+        tab.verticalHeader().hide()
+        tab.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        tab.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        lay.addWidget(tab, 1)
+        info = QLabel("")
+        info.setObjectName("muted")
+        lay.addWidget(info)
+
+        def fill():
+            src = self.cat.dat_sources()
+            tab.setRowCount(len(src))
+            for i, (n, c) in enumerate(src):
+                tab.setItem(i, 0, QTableWidgetItem(n))
+                it = QTableWidgetItem()
+                it.setData(Qt.DisplayRole, c)
+                tab.setItem(i, 1, it)
+            ident = sum(1 for r in self.cat.images() if r["ident"])
+            info.setText(f"{len(src)} base(s), {sum(c for _, c in src)} entrée(s) — "
+                         f"{ident} image(s) du catalogue identifiée(s).")
+
+        def imp():
+            ps, _ = QFileDialog.getOpenFileNames(dlg, "Importer des fichiers DAT", os.path.expanduser("~"),
+                                                 "Fichiers DAT (*.dat *.xml *.zip);;Tous les fichiers (*)")
+            if not ps:
+                return
+            from PySide6.QtWidgets import QApplication
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            tot, errs = 0, []
+            try:
+                for p in ps:
+                    try:
+                        n, _src = self.cat.import_dat(p)
+                        tot += n
+                    except Exception as ex:
+                        errs.append(f"{os.path.basename(p)} : {ex}")
+            finally:
+                QApplication.restoreOverrideCursor()
+            self.log.emit(f"Bases DAT : {tot} entrée(s) importée(s).", "ok")
+            if errs:
+                QMessageBox.warning(dlg, "Import DAT", "\n".join(errs[:10]))
+            fill()
+            self.refresh()
+
+        def names():
+            n = self.cat.apply_dat_names()
+            self.log.emit(f"{n} titre(s) renommé(s) d'après les bases DAT.", "ok")
+            self.refresh()
+            fill()
+
+        def clear():
+            if QMessageBox.question(dlg, "Bases DAT", "Effacer toutes les bases importées ?") == QMessageBox.Yes:
+                self.cat.clear_dats()
+                fill()
+                self.refresh()
+
+        row = QHBoxLayout()
+        for txt, fn in (("⤒  Importer…", imp), ("🏷  Nommer les images identifiées", names),
+                        ("🗑  Tout effacer", clear)):
+            b = QPushButton(txt)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        row.addStretch()
+        close = QPushButton("Fermer")
+        close.clicked.connect(dlg.accept)
+        row.addWidget(close)
+        lay.addLayout(row)
+        fill()
+        dlg.exec()
 
     def _selected_ids(self):
         return sorted({it.data(Qt.UserRole) for it in self.t.selectedItems()})

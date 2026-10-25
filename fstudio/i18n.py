@@ -832,6 +832,85 @@ Impossible de lancer l'installateur : 	Cannot start the installer:
 Pas de notes de version.	No release notes.
 Version 	Version
 Sommaire	Contents
+Pistes système vides (pas de CP/M).	Empty system tracks (no CP/M).
+Format IBM du CPC (compatible PC 160 Ko).	CPC IBM format (PC 160 KB compatible).
+Test de surface : isoler les zones défectueuses	Surface test: isolate bad areas
+Les pistes qui échouent à la vérification sont marquées inutilisables dans le système de fichiers\n(clusters défectueux FAT, blocs Amiga, blocs Thomson, fichier caché BADSECT.$$$ sur CPC).	Tracks that fail verification are marked unusable in the file system\n(FAT bad clusters, Amiga blocks, Thomson blocks, hidden BADSECT.$$$ file on CPC).
+Formatage terminé — 	Format finished — 
+ piste(s) défectueuse(s) isolée(s) 	 bad track(s) isolated 
+ inutilisables)	 unusable)
+ — réécriture incomplète	 — rewrite incomplete
+Formatage terminé : 	Format finished: 
+ — surface sans défaut 	 — surface without defects 
+Disquette inutilisable dans ce format : 	Disk unusable in this format: 
+Pistes défectueuses : 	Bad tracks: 
+ piste(s) défectueuse(s) (	 bad track(s) (
+) — isolement non pris en charge pour ce système : évitez cette disquette.	) — isolation not supported for this file system: avoid this disk.
+Test de surface : pistes défectueuses 	Surface test: bad tracks 
+ isolés ; mise à jour du système de fichiers (	 isolated; updating file system (
+Formatage — isolement des zones défectueuses	Format — isolating bad areas
+zone système (amorce, FAT ou répertoire)	system area (boot, FAT or directory)
+zone système (amorce, racine ou carte des blocs)	system area (boot, root or bitmap)
+piste du répertoire	directory track
+répertoire	directory
+Duplication en série	Batch duplication
+Écrire sur plusieurs disquettes à la suite	Write to several disks in a row
+Détecter l'insertion de la disquette suivante	Detect insertion of the next disk
+ disquette(s) écrite(s)	 disk(s) written
+, en échec : n° 	, failed: # 
+Disquette n°	Disk #
+écriture réussie	write succeeded
+<b>échec</b> 	<b>failed</b> 
+ — retirez-la et insérez la suivante.	 — remove it and insert the next one.
+⏹  Terminer la série	⏹  End the series
+Série terminée : 	Series finished: 
+ en échec (n° 	 failed (# 
+ sans erreur	 without errors
+ en échec.	 failed.
+ — disquette n°	 — disk #
+Insérez la disquette suivante puis <b>Oui</b>, ou <b>Non</b> pour terminer.	Insert the next disk then <b>Yes</b>, or <b>No</b> to finish.
+ piste(s) non vérifiée(s))	 track(s) not verified)
+Pas double	Double step
+Disquette 40 pistes (360 Ko, CPC, C64…) dans un lecteur 80 pistes (5,25" HD) :\nla tête avance de deux pistes physiques par piste logique.\nInutile avec un lecteur 40 pistes ou un lecteur 3,5".	40-track disk (360 KB, CPC, C64…) in an 80-track drive (5.25" HD):\nthe head moves two physical tracks per logical track.\nNot needed with a 40-track drive or a 3.5" drive.
+ · pas double	 · double step
+pas double	double step
+Disquette 40 pistes dans un lecteur 80 pistes : le <b>pas double</b> est nécessaire pour la lire correctement.	40-track disk in an 80-track drive: <b>double step</b> is needed to read it correctly.
+Activer le pas double	Enable double step
+Le pas double est activé mais cette disquette n'en a pas besoin.	Double step is enabled but this disk does not need it.
+Désactiver	Disable
+Piste physique 2 = cylindre 1 : disquette 40 pistes (pas double nécessaire)	Physical track 2 = cylinder 1: 40-track disk (double step needed)
+Archive ZIP (images disquette)	ZIP archive (disk images)
+Aucune image disquette dans 	No disk image in 
+Archive	Archive
+ contient 	 contains 
+ images :	 images:
+Identification (DAT)	Identification (DAT)
+🏷  Bases DAT…	🏷  DAT databases…
+Identifier les images avec les bases TOSEC, No-Intro… (fichiers DAT)	Identify images with TOSEC, No-Intro… databases (DAT files)
+Bases d'identification (DAT)	Identification databases (DAT)
+Base	Database
+Entrées	Entries
+ base(s), 	 database(s), 
+ entrée(s) — 	 entry(ies) — 
+ image(s) du catalogue identifiée(s).	 catalogue image(s) identified.
+Importer des fichiers DAT	Import DAT files
+⤒  Importer…	⤒  Import…
+🏷  Nommer les images identifiées	🏷  Name identified images
+🗑  Tout effacer	🗑  Clear all
+Fermer	Close
+Effacer toutes les bases importées ?	Clear all imported databases?
+Bases DAT : 	DAT databases: 
+ entrée(s) importée(s).	 entry(ies) imported.
+ titre(s) renommé(s) d'après les bases DAT.	 title(s) renamed from DAT databases.
+Import DAT	DAT import
+Base : 	Database: 
+Image identifiée : 	Image identified: 
+🏷 Identifiée : 	🏷 Identified: 
+Image inconnue des bases DAT importées.	Image not found in the imported DAT databases.
+Les fichiers <b>DAT</b> (TOSEC, No-Intro, Redump… au format Logiqx XML ou ClrMamePro) listent les empreintes des images connues. Une fois importés, les images du catalogue et les disquettes lues sont reconnues automatiquement.<br>	<b>DAT</b> files (TOSEC, No-Intro, Redump… in Logiqx XML or ClrMamePro format) list the checksums of known images. Once imported, catalogue images and read disks are identified automatically.<br>
+Téléchargement : tosecdev.org (packs .zip acceptés tels quels).	Download: tosecdev.org (.zip packs accepted as is).
+Identification	Identification
+Base DAT	DAT database
 AMSDOS Data (40 pistes, 9 × 512, ID C1)	AMSDOS Data (40 tracks, 9 × 512, ID C1)
 AMSDOS Système / Vendor (40 pistes, ID 41)	AMSDOS System / Vendor (40 tracks, ID 41)
 Format CPC le plus courant (178 Ko).	Most common CPC format (178 KB).

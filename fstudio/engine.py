@@ -370,6 +370,9 @@ def track_list(ts) -> List[Tuple[int, int, int, int]]:
     return out
 
 
+DOUBLE_STEP = False     # disquettes 40 pistes dans un lecteur 80 pistes
+
+
 def _trackset(fmt_cls, spec: Optional[str], default: str) -> util.TrackSet:
     if fmt_cls is not None:
         ts = copy.copy(fmt_cls.tracks)
@@ -379,6 +382,8 @@ def _trackset(fmt_cls, spec: Optional[str], default: str) -> util.TrackSet:
         ts = util.TrackSet(default)
     if spec:
         ts.update_from_trackspec(spec)
+    if DOUBLE_STEP and ts.step == 1 and ts.cyls and max(ts.cyls) <= 43 and "step=" not in (spec or ""):
+        ts.step = 2
     return ts
 
 
@@ -689,6 +694,22 @@ class AnalyseJob(Job):
                     scan.append(f"T{c}.{h} : {t.summary_string()}")
             except Exception:
                 pass
+        # Disquette 40 pistes dans un lecteur 80 pistes ? (la piste physique 2 porte l'ID cylindre 1)
+        dstep = None
+        try:
+            self.check()
+            u.seek(2, 0)
+            t = F.get_diskdef("ibm.scan").decode_flux(2, 0, u.read_track(revs=2))
+            inner = getattr(t, "track", t)
+            ids = {s.idam.c for s in getattr(inner, "sectors", [])}
+            if ids == {1}:
+                dstep = True
+                scan.append("Piste physique 2 = cylindre 1 : disquette 40 pistes (pas double nécessaire)")
+            elif ids == {2}:
+                dstep = False
+        except Exception:
+            pass
+        u.seek(0, 0)
         STDOUT.sink = _sink
 
         cands = []
@@ -708,7 +729,7 @@ class AnalyseJob(Job):
         for s in scan:
             self.info("Scan IBM " + s)
         self.result.emit({"kind": "analyse", "candidates": cands, "rpm": rpm,
-                          "density": density_guess(h00), "scan": scan,
+                          "density": density_guess(h00), "scan": scan, "double_step": dstep,
                           "hist": h00})
 
     def _try_candidates(self, fluxes):

@@ -103,6 +103,7 @@ _EXT_OVERRIDE = {
 
 # Descriptions des types d'image (extension -> libellé).
 IMAGE_DESC = {
+    ".zip": "Archive ZIP (images disquette)",
     ".img": "Image secteurs brute (IMG/IMA)", ".ima": "Image secteurs brute",
     ".st": "Atari ST", ".msa": "Atari ST compressée (MSA)",
     ".adf": "Amiga Disk File", ".d64": "Commodore 1541", ".d71": "Commodore 1571",
@@ -304,7 +305,7 @@ def image_class(path: str, fmt: Optional[str] = None):
 
 
 def image_filter(explore: bool = False) -> str:
-    exts = sorted(set(util.image_types) | ({".2mg", ".ima", ".vfd", ".flp", ".edsk"} if explore else set()))
+    exts = sorted(set(util.image_types) | ({".2mg", ".ima", ".vfd", ".flp", ".edsk", ".zip"} if explore else set()))
     allf = " ".join("*" + e for e in exts)
     lines = [f"Toutes les images ({allf})"]
     for e in exts:

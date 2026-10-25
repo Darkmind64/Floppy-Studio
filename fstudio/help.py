@@ -44,9 +44,9 @@ lecteurs Amiga, Atari ou anciens 5,25" peuvent être en DS0.</li>
 <li>Alimentez le lecteur par son propre connecteur (Molex ou Berg) : l'USB ne suffit pas.</li>
 <li>Un lecteur 3,5" HD lit les disquettes DD et HD. Pour <b>écrire</b> une disquette DD dans un lecteur HD,
 masquez le trou HD ou utilisez une vraie disquette DD.</li>
-<li>Pour les formats 40 pistes (CPC, Thomson 5,25", PC 360 Ko) sur un lecteur 80 pistes, Floppy Studio
-écrit les 40 premières pistes ; les lecteurs 40 pistes d'origine relisent ces disquettes s'ils ont été
-écrits sur disquette vierge (effacée).</li>
+<li>Disquettes <b>40 pistes</b> (PC 360 Ko, CPC, Thomson 5,25"…) dans un lecteur 5,25" <b>80 pistes</b> :
+cochez <b>Pas double</b> dans la barre « Format actif » (la tête avance de deux pistes physiques par
+piste). L'analyse le détecte et le propose. Inutile avec un lecteur 3,5" ou un lecteur 40 pistes.</li>
 <li>Le firmware se met à jour depuis la page <b>Outils</b>.</li>
 </ul>""",
     "Formats par machine": """
@@ -85,6 +85,14 @@ tels quels pour les disquettes protégées.</li>
 <li>Page <b>Formater</b> : système de fichiers vierge (PC, Atari, MSX, Amiga, Thomson, CPC, C64 1581) ou
 formatage bas niveau de n'importe quel format. <b>Créer une image vierge</b> la prépare pour un émulateur
 ou pour y copier des fichiers dans l'explorateur avant écriture.</li>
+<li><b>Test de surface</b> (formatage) : les pistes qui échouent à la vérification sont isolées dans le
+système de fichiers (clusters défectueux FAT, blocs Amiga et Thomson, fichier caché BADSECT.$$$ sur CPC) ;
+la disquette reste utilisable avec une capacité réduite. Si une zone système est touchée, elle est déclarée
+inutilisable.</li>
+<li><b>Duplication en série</b> (page Écrire) : la même image est écrite sur plusieurs disquettes ; la
+suivante est détectée à l'insertion, un bilan liste les disquettes en échec.</li>
+<li>Si les 4 premières pistes échouent, l'écriture s'arrête et la cause probable est indiquée (format DD
+sur disquette HD, protection en écriture).</li>
 <li>Vérifiez que l'onglet de protection est fermé (3,5" : fenêtre fermée).</li>
 </ul>""",
     "Explorateur": """
@@ -113,7 +121,12 @@ non standard et les pistes longues. Le rapport (📋) s'exporte en HTML ou PDF.<
 <h2>Catalogue</h2>
 <p>Chaque image lue ou ouverte est ajoutée au catalogue (option). Recherchez par titre, étiquette, note ou
 <b>nom de fichier contenu dans les images</b> ; double-cliquez pour ouvrir. Le bouton <b>Doublons</b> liste
-les images identiques et les fichiers présents sur plusieurs disquettes. Export CSV.</p>""",
+les images identiques et les fichiers présents sur plusieurs disquettes. Export CSV.</p>
+<p><b>Archives .zip</b> : ouvrez, écrivez, convertissez ou cataloguez directement les images contenues dans
+un zip (choix de l'image s'il y en a plusieurs).</p>
+<p><b>Bases DAT</b> : importez les fichiers DAT de TOSEC, No-Intro… (XML Logiqx ou ClrMamePro, packs .zip
+acceptés). Les images du catalogue, les images ouvertes et les disquettes lues sont alors identifiées par
+leur empreinte ; <b>Nommer les images identifiées</b> remplace les titres par défaut par le nom officiel.</p>""",
     "Raccourcis clavier": "",
     "Dépannage": """
 <h2>Dépannage</h2>
@@ -150,8 +163,9 @@ drives may be DS0.</li>
 <li>Power the drive from its own connector (Molex or Berg): USB is not enough.</li>
 <li>A 3.5" HD drive reads DD and HD disks. To <b>write</b> a DD disk in an HD drive, cover the HD hole or use a
 real DD disk.</li>
-<li>40-track formats (CPC, Thomson 5.25", PC 360 KB) on an 80-track drive: the first 40 tracks are written;
-original 40-track drives read them back best when written on a blank (erased) disk.</li>
+<li><b>40-track</b> disks (PC 360 KB, CPC, Thomson 5.25"…) in an <b>80-track</b> 5.25" drive: tick <b>Double
+step</b> in the "Active format" bar (the head moves two physical tracks per track). Analysis detects it and
+suggests it. Not needed with a 3.5" drive or a 40-track drive.</li>
 <li>Firmware updates are in the <b>Tools</b> page.</li>
 </ul>""",
     "Formats par machine": """
@@ -190,6 +204,13 @@ as-is for protected disks.</li>
 <li><b>Format</b> page: blank file system (PC, Atari, MSX, Amiga, Thomson, CPC, C64 1581) or low-level format of
 any format. <b>Create blank image</b> prepares it for an emulator or to copy files in the explorer before
 writing.</li>
+<li><b>Surface test</b> (format): tracks failing verification are isolated in the file system (FAT bad
+clusters, Amiga and Thomson blocks, hidden BADSECT.$$$ file on CPC); the disk stays usable with less space. If a
+system area is affected, the disk is reported as unusable.</li>
+<li><b>Batch duplication</b> (Write page): the same image is written to several disks; the next one is detected
+on insertion and a summary lists failed disks.</li>
+<li>If the first 4 tracks fail, writing stops and the likely cause is shown (DD format on an HD disk,
+write protection).</li>
 <li>Make sure the write-protect tab is closed.</li>
 </ul>""",
     "Explorateur": """
@@ -215,7 +236,12 @@ long tracks. The report (📋) exports to HTML or PDF.</p>
 <h2>Catalogue</h2>
 <p>Every read or opened image is added to the catalogue (optional). Search by title, label, note or <b>name of a
 file inside the images</b>; double-click to open. <b>Duplicates</b> lists identical images and files present on
-several disks. CSV export.</p>""",
+several disks. CSV export.</p>
+<p><b>.zip archives</b>: open, write, convert or catalogue the images inside a zip directly (choose the image
+when there are several).</p>
+<p><b>DAT databases</b>: import TOSEC, No-Intro… DAT files (Logiqx XML or ClrMamePro, .zip packs accepted).
+Catalogue images, opened images and read disks are then identified by checksum; <b>Name identified images</b>
+replaces default titles with the official name.</p>""",
     "Raccourcis clavier": "",
     "Dépannage": """
 <h2>Troubleshooting</h2>

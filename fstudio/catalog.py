@@ -6,9 +6,12 @@ import os
 import sqlite3
 import threading
 import time
+import zlib
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QStandardPaths, QThread, Signal
+
+from . import archive as AR
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS images(
@@ -20,6 +23,10 @@ CREATE TABLE IF NOT EXISTS files(
 CREATE INDEX IF NOT EXISTS files_img ON files(image_id);
 CREATE INDEX IF NOT EXISTS files_md5 ON files(md5);
 CREATE INDEX IF NOT EXISTS images_md5 ON images(md5);
+CREATE TABLE IF NOT EXISTS dat(md5 TEXT, sha1 TEXT, crc TEXT, size INTEGER, game TEXT, rom TEXT, source TEXT);
+CREATE INDEX IF NOT EXISTS dat_md5 ON dat(md5);
+CREATE INDEX IF NOT EXISTS dat_sha1 ON dat(sha1);
+CREATE INDEX IF NOT EXISTS dat_crc ON dat(crc, size);
 """
 IMAGE_EXT = {".img", ".ima", ".st", ".msa", ".adf", ".d64", ".d71", ".d81", ".fd", ".dsk", ".edsk", ".hfe",
              ".scp", ".imd", ".td0", ".dmk", ".do", ".po", ".2mg", ".vfd", ".flp", ".raw", ".ipf", ".dim"}
@@ -38,6 +45,9 @@ class Catalog:
         self.path = path or db_path()
         self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.executescript(SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(images)")}
+        if "crc" not in cols:
+            self.db.execute("ALTER TABLE images ADD COLUMN crc TEXT DEFAULT ''")
         self.db.commit()
         self.lock = threading.RLock()
 
@@ -49,22 +59,25 @@ class Catalog:
 
     def _add_image(self, path, title, flux, fmt, force) -> Optional[int]:
         from .fs import open_image
-        path = os.path.abspath(path)
-        st = os.stat(path)
+        a, m = AR.split(path)
+        path = os.path.abspath(a) + (AR.SEP + m if m else "")
+        real = AR.extract(path)
+        st = os.stat(AR.split(path)[0])
         row = self.db.execute("SELECT id, mtime FROM images WHERE path=?", (path,)).fetchone()
         if row and not force and abs((row[1] or 0) - st.st_mtime) < 1:
             if flux:
                 self.db.execute("UPDATE images SET flux=? WHERE id=?", (flux, row[0]))
                 self.db.commit()
             return row[0]
-        with open(path, "rb") as f:
+        with open(real, "rb") as f:
             data = f.read()
         md5, sha1 = hashlib.md5(data).hexdigest(), hashlib.sha1(data).hexdigest()
+        crc = "%08x" % (zlib.crc32(data) & 0xFFFFFFFF)
         platform = fsname = label = ""
         bad = 0
         files: List[Tuple[str, int, str, int]] = []
         try:
-            disk, vols = open_image(path, fmt)
+            disk, vols = open_image(real, fmt)
             bad = disk.bad_sectors()
             fmt = fmt or disk.fmt
             for fs in vols[:2]:
@@ -89,19 +102,19 @@ class Catalog:
             pass
         if not title:
             title = (row and self.db.execute("SELECT title FROM images WHERE id=?", (row[0],)).fetchone()[0]) \
-                or os.path.splitext(os.path.basename(path))[0]
+                or os.path.splitext(os.path.basename(m or path))[0]
         if row:
             iid = row[0]
             self.db.execute("UPDATE images SET title=?, platform=?, fs=?, label=?, fmt=?, size=?, md5=?, sha1=?, "
-                            "mtime=?, bad=?, nfiles=?, flux=COALESCE(NULLIF(?, ''), flux) WHERE id=?",
+                            "mtime=?, bad=?, nfiles=?, flux=COALESCE(NULLIF(?, ''), flux), crc=? WHERE id=?",
                             (title, platform, fsname, label, fmt or "", len(data), md5, sha1, st.st_mtime, bad,
-                             len(files), flux, iid))
+                             len(files), flux, crc, iid))
             self.db.execute("DELETE FROM files WHERE image_id=?", (iid,))
         else:
             cur = self.db.execute("INSERT INTO images(path,title,platform,fs,label,fmt,size,md5,sha1,added,mtime,"
-                                  "bad,nfiles,flux) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                  "bad,nfiles,flux,crc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                                   (path, title, platform, fsname, label, fmt or "", len(data), md5, sha1,
-                                   time.time(), st.st_mtime, bad, len(files), flux))
+                                   time.time(), st.st_mtime, bad, len(files), flux, crc))
             iid = cur.lastrowid
         self.db.executemany("INSERT INTO files(image_id,path,size,md5,deleted) VALUES(?,?,?,?,?)",
                             [(iid,) + f for f in files])
@@ -110,13 +123,18 @@ class Catalog:
 
     # ------------------------------------------------------------ Consultation
     def images(self, text: str = "", platform: str = "") -> List[Dict]:
-        q = "SELECT * FROM images"
+        q = ("SELECT images.*, COALESCE("
+             "(SELECT game || '\t' || source FROM dat WHERE dat.md5 = images.md5 LIMIT 1),"
+             "(SELECT game || '\t' || source FROM dat WHERE dat.sha1 = images.sha1 LIMIT 1),"
+             "(SELECT game || '\t' || source FROM dat WHERE dat.crc = images.crc AND dat.size = images.size "
+             "LIMIT 1), '') AS ident FROM images")
         args, cond = [], []
         if text:
             like = f"%{text}%"
             cond.append("(title LIKE ? OR path LIKE ? OR label LIKE ? OR notes LIKE ? OR fs LIKE ? OR "
-                        "id IN (SELECT image_id FROM files WHERE path LIKE ?))")
-            args += [like] * 6
+                        "id IN (SELECT image_id FROM files WHERE path LIKE ?) OR "
+                        "md5 IN (SELECT md5 FROM dat WHERE game LIKE ?) OR sha1 IN (SELECT sha1 FROM dat WHERE game LIKE ?))")
+            args += [like] * 8
         if platform:
             cond.append("platform=?")
             args.append(platform)
@@ -150,6 +168,78 @@ class Catalog:
             "GROUP BY f.md5 HAVING COUNT(DISTINCT f.image_id)>1 ORDER BY f.size DESC LIMIT 1000").fetchall()
         return groups, files
 
+    # ------------------------------------------------------------ Bases DAT (TOSEC, No-Intro…)
+    def identify(self, md5: str = "", sha1: str = "", crc: str = "", size: int = 0) -> List[Tuple[str, str, str]]:
+        """[(jeu, fichier rom, base)] correspondant à une empreinte."""
+        with self.lock:
+            return self.db.execute(
+                "SELECT DISTINCT game, rom, source FROM dat WHERE (md5<>'' AND md5=?) OR (sha1<>'' AND sha1=?) "
+                "OR (crc<>'' AND crc=? AND size=?) LIMIT 20", (md5.lower(), sha1.lower(), crc.lower(), size)).fetchall()
+
+    def identify_file(self, path: str) -> List[Tuple[str, str, str]]:
+        with open(AR.extract(path), "rb") as f:
+            data = f.read()
+        return self.identify(hashlib.md5(data).hexdigest(), hashlib.sha1(data).hexdigest(),
+                             "%08x" % (zlib.crc32(data) & 0xFFFFFFFF), len(data))
+
+    def import_dat(self, path: str) -> Tuple[int, List[str]]:
+        """Importe un fichier DAT (XML Logiqx ou ClrMamePro), ou une archive .zip de DAT."""
+        blobs = []
+        if path.lower().endswith(".zip"):
+            import zipfile
+            with zipfile.ZipFile(path) as z:
+                for i in z.infolist():
+                    if i.filename.lower().endswith((".dat", ".xml")):
+                        blobs.append((os.path.basename(i.filename), z.read(i)))
+        else:
+            with open(path, "rb") as f:
+                blobs.append((os.path.basename(path), f.read()))
+        n, sources = 0, []
+        with self.lock:
+            for name, raw in blobs:
+                src, rows = parse_dat(raw, os.path.splitext(name)[0])
+                if not rows:
+                    continue
+                self.db.execute("DELETE FROM dat WHERE source=?", (src,))
+                self.db.executemany("INSERT INTO dat(md5,sha1,crc,size,game,rom,source) VALUES(?,?,?,?,?,?,?)",
+                                    [r + (src,) for r in rows])
+                n += len(rows)
+                sources.append(src)
+            self._backfill_crc()
+            self.db.commit()
+        return n, sources
+
+    def _backfill_crc(self):
+        for iid, p in self.db.execute("SELECT id, path FROM images WHERE crc IS NULL OR crc=''").fetchall():
+            try:
+                with open(AR.extract(p), "rb") as f:
+                    c = "%08x" % (zlib.crc32(f.read()) & 0xFFFFFFFF)
+                self.db.execute("UPDATE images SET crc=? WHERE id=?", (c, iid))
+            except Exception:
+                pass
+
+    def dat_sources(self) -> List[Tuple[str, int]]:
+        return self.db.execute("SELECT source, COUNT(*) FROM dat GROUP BY source ORDER BY source").fetchall()
+
+    def clear_dats(self):
+        with self.lock:
+            self.db.execute("DELETE FROM dat")
+            self.db.commit()
+
+    def apply_dat_names(self) -> int:
+        """Remplace les titres par défaut (nom du fichier) par le nom identifié."""
+        n = 0
+        for r in self.images():
+            if not r["ident"]:
+                continue
+            a, m = AR.split(r["path"])
+            default = os.path.splitext(os.path.basename(m or a))[0]
+            game = r["ident"].split("\t")[0]
+            if r["title"] == default and game != r["title"]:
+                self.update(r["id"], title=game)
+                n += 1
+        return n
+
     def update(self, iid: int, **kw):
         for k, v in kw.items():
             if k in ("title", "notes", "flux"):
@@ -164,7 +254,7 @@ class Catalog:
     def purge_missing(self) -> int:
         n = 0
         for iid, p in self.db.execute("SELECT id, path FROM images").fetchall():
-            if not os.path.isfile(p):
+            if not AR.exists(p):
                 self.remove(iid)
                 n += 1
         return n
@@ -182,10 +272,76 @@ class Catalog:
         with open(path, "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f, delimiter=";")
             w.writerow(["Titre", "Plateforme", "Système", "Étiquette", "Fichiers", "Taille", "Illisibles",
-                        "MD5", "SHA-1", "Chemin", "Flux", "Notes"])
+                        "MD5", "SHA-1", "Chemin", "Flux", "Notes", "Identification", "Base DAT"])
             for r in rows:
                 w.writerow([r["title"], PLATFORM_LABEL.get(r["platform"], r["platform"]), r["fs"], r["label"],
-                            r["nfiles"], r["size"], r["bad"], r["md5"], r["sha1"], r["path"], r["flux"], r["notes"]])
+                            r["nfiles"], r["size"], r["bad"], r["md5"], r["sha1"], r["path"], r["flux"], r["notes"]]
+                           + ((r.get("ident") or "").split("\t") + ["", ""])[:2])
+
+
+def parse_dat(raw: bytes, default_name: str) -> Tuple[str, List[Tuple]]:
+    """(nom de la base, [(md5, sha1, crc, taille, jeu, rom)])."""
+    rows: List[Tuple] = []
+    name = default_name
+    head = raw[:4096].lstrip()
+    if head.startswith(b"<") or b"<datafile" in head:
+        import xml.etree.ElementTree as ET
+        import io
+        game = ""
+        for ev, el in ET.iterparse(io.BytesIO(raw), events=("start", "end")):
+            tag = el.tag.rsplit("}", 1)[-1]
+            if ev == "start" and tag in ("game", "machine", "software"):
+                game = el.get("name", "")
+            elif ev == "end" and tag == "name" and el.text and not game and name == default_name:
+                name = el.text.strip()
+            elif ev == "end" and tag == "rom":
+                try:
+                    size = int(el.get("size", "0") or 0)
+                except ValueError:
+                    size = 0
+                rows.append(((el.get("md5") or "").lower(), (el.get("sha1") or "").lower(),
+                             (el.get("crc") or "").lower().zfill(8) if el.get("crc") else "", size, game,
+                             el.get("name", "")))
+            elif ev == "end" and tag in ("game", "machine", "software"):
+                el.clear()
+    else:
+        import re
+        toks = re.findall(r'"[^"]*"|\(|\)|[^\s()"]+', raw.decode("utf-8", "replace"))
+
+        def block(k):
+            """Lit un bloc « ( clé valeur … ) » à partir de toks[k] == '(' → (dict, liste de sous-blocs, k)."""
+            d, subs, k = {}, [], k + 1
+            while k < len(toks) and toks[k] != ")":
+                key = toks[k]
+                if k + 1 < len(toks) and toks[k + 1] == "(":
+                    sub, _s, k = block(k + 1)
+                    subs.append((key, sub))
+                else:
+                    d.setdefault(key, toks[k + 1].strip('"') if k + 1 < len(toks) else "")
+                    k += 2
+                    continue
+                k += 1
+            return d, subs, k
+
+        k = 0
+        while k < len(toks):
+            if k + 1 < len(toks) and toks[k + 1] == "(":
+                kind = toks[k]
+                d, subs, k = block(k + 1)
+                if kind == "clrmamepro" and d.get("name"):
+                    name = d["name"]
+                elif kind in ("game", "machine", "resource"):
+                    for sk, r in subs:
+                        if sk != "rom":
+                            continue
+                        try:
+                            size = int(r.get("size", "0") or 0)
+                        except ValueError:
+                            size = 0
+                        rows.append((r.get("md5", "").lower(), r.get("sha1", "").lower(),
+                                     r.get("crc", "").lower(), size, d.get("name", ""), r.get("name", "")))
+            k += 1
+    return name, rows
 
 
 class ScanJob(QThread):
@@ -203,14 +359,21 @@ class ScanJob(QThread):
         for p in self.paths:
             if os.path.isdir(p):
                 for root, _, names in os.walk(p):
-                    todo += [os.path.join(root, n) for n in names if os.path.splitext(n)[1].lower() in IMAGE_EXT]
-            elif os.path.isfile(p):
+                    for n in names:
+                        q = os.path.join(root, n)
+                        if os.path.splitext(n)[1].lower() in IMAGE_EXT:
+                            todo.append(q)
+                        elif AR.is_archive(q):
+                            todo += [q + AR.SEP + x for x in AR.images_in(q)]
+            elif AR.is_archive(p):
+                todo += [p + AR.SEP + x for x in AR.images_in(p)]
+            elif os.path.isfile(p) or AR.is_virtual(p):
                 todo.append(p)
         n = 0
         for i, p in enumerate(todo):
             if self.cancel:
                 break
-            self.progress.emit(i, len(todo), os.path.basename(p))
+            self.progress.emit(i, len(todo), AR.display(p))
             try:
                 if self.cat.add_image(p, **self.extra.get(p, {})) is not None:
                     n += 1

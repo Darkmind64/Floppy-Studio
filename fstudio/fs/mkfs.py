@@ -240,3 +240,126 @@ def save_blank(spec: MkSpec, label: str, path: str):
 
 def blank_for(fmt: str, capacity: int, fill: int = 0xE5) -> bytes:
     return bytes([fill]) * capacity
+
+
+# --------------------------------------------------------------------------
+# Marquage des zones défectueuses après test de surface
+# --------------------------------------------------------------------------
+class BadMarkError(Exception):
+    """Zone système illisible : la disquette n'est pas utilisable dans ce format."""
+
+
+def _fat_mark(d: bytearray, bad_tracks) -> int:
+    spc, res, nfats, nroot = d[13], struct.unpack_from("<H", d, 14)[0], d[16], struct.unpack_from("<H", d, 17)[0]
+    total = struct.unpack_from("<H", d, 19)[0] or struct.unpack_from("<I", d, 32)[0]
+    spf, spt, heads = struct.unpack_from("<HHH", d, 22)
+    data_start = res + nfats * spf + (nroot * 32 + 511) // 512
+    nclus = (total - data_start) // spc
+    marked = set()
+    for c, h in bad_tracks:
+        first = (c * heads + h) * spt
+        for s in range(first, min(first + spt, total)):
+            if s < data_start:
+                raise BadMarkError(f"piste {c}.{h} : zone système (amorce, FAT ou répertoire)")
+            cl = (s - data_start) // spc + 2
+            if cl < nclus + 2:
+                marked.add(cl)
+    for f in range(nfats):
+        base = (res + f * spf) * 512
+        for cl in marked:
+            o = base + cl * 3 // 2
+            v = struct.unpack_from("<H", d, o)[0]
+            v = (v & 0x000F) | (0xFF7 << 4) if cl & 1 else (v & 0xF000) | 0xFF7
+            struct.pack_into("<H", d, o, v)
+    return len(marked) * spc * 512
+
+
+def _amiga_mark(d: bytearray, bad_tracks, nsec: int) -> int:
+    nblocks = len(d) // 512
+    root_n, bm_n = nblocks // 2, struct.unpack_from(">I", d, (nblocks // 2) * 512 + 316)[0]
+    bm = bytearray(d[bm_n * 512:bm_n * 512 + 512])
+    n = 0
+    for c, h in bad_tracks:
+        for b in range((c * 2 + h) * nsec, (c * 2 + h + 1) * nsec):
+            if b < 2 or b in (root_n, bm_n):
+                raise BadMarkError(f"piste {c}.{h} : zone système (amorce, racine ou carte des blocs)")
+            if b >= nblocks:
+                continue
+            i = b - 2
+            o = 4 + (i // 32) * 4
+            v = struct.unpack_from(">I", bm, o)[0]
+            if v & (1 << (i % 32)):
+                struct.pack_into(">I", bm, o, v & ~(1 << (i % 32)))
+                n += 1
+    _amiga_csum(bm, 0)
+    d[bm_n * 512:bm_n * 512 + 512] = bm
+    return n * 512
+
+
+def _thomson_mark(d: bytearray, bad_tracks, tracks: int = 80) -> int:
+    ss, side_sz = 256, tracks * 16 * 256
+    n = 0
+    for c, h in bad_tracks:
+        if c == 20:
+            raise BadMarkError(f"piste {c}.{h} : piste du répertoire")
+        if h * side_sz >= len(d):
+            continue
+        fat_o = h * side_sz + 20 * 16 * ss + ss
+        for blk in (2 * c, 2 * c + 1):
+            if d[fat_o + 1 + blk] == 0xFF:
+                d[fat_o + 1 + blk] = 0xFE
+                n += 1
+    return n * 8 * ss
+
+
+def _cpc_mark(d: bytearray, bad_tracks, first_id: int) -> int:
+    off = {0xC1: 0, 0x41: 2, 0x01: 1}[first_id]
+    spt = 8 if first_id == 0x01 else 9
+    nblocks = (40 - off) * spt * 512 // 1024
+    blocks = set()
+    for c, h in bad_tracks:
+        if h or c < off:
+            continue
+        for i in range((c - off) * spt, (c - off + 1) * spt):
+            b = i * 512 // 1024
+            if b < 2:
+                raise BadMarkError(f"piste {c}.{h} : répertoire")
+            if b < nblocks:
+                blocks.add(b)
+    if not blocks:
+        return 0
+    dir_o = off * spt * 512
+    blist = sorted(blocks)
+    slot = 0
+    for x in range(0, len(blist), 16):
+        ent = bytearray(32)
+        ent[1:12] = b"BADSECT" + b" " + bytes([ord("$") | 0x80, ord("$") | 0x80, ord("$")])
+        ent[12] = x // 16
+        ent[15] = 0x80
+        bl = blist[x:x + 16]
+        ent[16:16 + len(bl)] = bytes(bl)
+        while d[dir_o + slot * 32] != 0xE5:
+            slot += 1
+        d[dir_o + slot * 32:dir_o + slot * 32 + 32] = ent
+        slot += 1
+    return len(blocks) * 1024
+
+
+def mark_bad(spec: MkSpec, data: bytes, bad_tracks):
+    """Marque comme inutilisables les pistes défectueuses dans l'image vierge → (image, octets perdus).
+    Lève BadMarkError si une zone système est touchée, NotImplementedError si non pris en charge."""
+    d = bytearray(data)
+    bad = sorted(set(bad_tracks))
+    if not bad:
+        return data, 0
+    if spec.fmt.startswith(("ibm.", "atarist.", "msx.")) and spec.group != "Amstrad CPC":
+        lost = _fat_mark(d, bad)
+    elif spec.fmt.startswith("amiga."):
+        lost = _amiga_mark(d, bad, 22 if spec.fmt.endswith("_hd") else 11)
+    elif spec.fmt.startswith("thomson."):
+        lost = _thomson_mark(d, bad)
+    elif spec.group == "Amstrad CPC":
+        lost = _cpc_mark(d, bad, {"cpcdata": 0xC1, "cpcsys": 0x41}.get(spec.key, 0x01))
+    else:
+        raise NotImplementedError(spec.fmt)
+    return bytes(d), lost
